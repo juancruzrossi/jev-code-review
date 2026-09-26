@@ -261,7 +261,7 @@ async function runReview(args) {
   // Bookkeeping for the next call's `previous`, appended to the same text the
   // model already reads (Claude Code's client drops `content` text whenever
   // `structuredContent` is also present, so round state travels inline instead).
-  lines.push(`<!-- jev:previous ${JSON.stringify({ rounds, task: pinnedTask })} -->`);
+  lines.push(`<!-- jev:previous ${JSON.stringify({ rounds, task: pinnedTask }).replaceAll('>', '\\u003e')} -->`);
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }

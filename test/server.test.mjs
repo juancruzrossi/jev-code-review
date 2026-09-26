@@ -46,14 +46,18 @@ function extractTasks(stderr) {
     .map((line) => JSON.parse(line.slice(5)));
 }
 
-function extractMarker(stdout, id) {
+function extractMarkerLine(stdout, id) {
   const response = stdout
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line))
     .find((msg) => msg.id === id);
   const text = response.result.content[0].text;
-  const match = /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(text);
+  return /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(text)[0];
+}
+
+function extractMarker(stdout, id) {
+  const match = /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(extractMarkerLine(stdout, id));
   return JSON.parse(match[1]);
 }
 
@@ -76,4 +80,13 @@ test('an old marker without task falls back to the current call task', async () 
   const previous = `<!-- jev:previous ${JSON.stringify({ rounds: [[9, 9, 9, 9, 9, 9]] })} -->`;
   const { stdout, stderr } = await runServer([call(1, { task: 'C', diff: 'd', previous })]);
   assert.deepEqual(extractTasks(stderr), ['C']);
+});
+
+test('a task containing --> survives the marker into round 2', async () => {
+  const task = 'Render <!-- note --> in the template';
+  const { stdout } = await runServer([call(1, { task, diff: 'd' })]);
+  const marker = extractMarkerLine(stdout, 1);
+  const { stdout: stdout2, stderr: stderr2 } = await runServer([call(1, { task: 'B', diff: 'd', previous: marker })]);
+  assert.deepEqual(extractTasks(stderr2), [task]);
+  assert.equal(extractMarker(stdout2, 1).rounds.length, 2);
 });
