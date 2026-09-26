@@ -86,4 +86,8 @@ codex plugin remove jev-code-review@jev-code-review
 
 ### OpenCode
 
-Remove `github:juancruzrossi/jev-code-review` from `plugin` in `~/.config/opencode/opencode.jsonc`.
+Remove from `~/.config/opencode/opencode.jsonc`:
+
+```jsonc
+{ "plugin": ["github:juancruzrossi/jev-code-review"] }
+```
