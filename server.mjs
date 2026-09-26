@@ -285,8 +285,14 @@ const TOOL_DEFINITION = {
   inputSchema: {
     type: 'object',
     properties: {
-      task: { type: 'string', description: "The user's requested behavior and constraints." },
-      diff: { type: 'string', description: 'The current implementation diff.' },
+      task: {
+        type: 'string',
+        description: "The user's requested behavior and constraints, unchanged across rounds — later rounds reuse the round-1 task."
+      },
+      diff: {
+        type: 'string',
+        description: 'Only the real diff of the change (e.g. `git diff`); no pseudo-diffs or changes outside the repo — describe those in `context`.'
+      },
       files: {
         type: 'array',
         description: 'Only neighboring files needed to judge conventions.',
