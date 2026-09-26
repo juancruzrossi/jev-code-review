@@ -9,12 +9,15 @@
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { FIX_RULE, MARKER_HINT, MARKER_TAG } from './context.mjs';
 
 const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const JEV_MODEL = 'jev-latest';
 const MAX_ROUNDS = 3;
 const PASS_SCORE = 8;
 const MIN_PROGRESS = 0.3;
+const DELIVER = 'deliver with your own judgment.';
+const MARKER_PATTERN = new RegExp(`${MARKER_TAG}\\s*(\\{.*\\})`, 's');
 
 // The review framing (Q5/Q18): sent only to Jev, never to the coding model
 // (see context.mjs).
@@ -125,6 +128,8 @@ function buildQuestions() {
   return questions;
 }
 
+const QUESTIONS = buildQuestions();
+
 function readApiKey() {
   if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
   try {
@@ -214,11 +219,11 @@ function renderTable(rounds) {
 
 function verdictLine(round, allPassed, noProgress) {
   if (allPassed) return 'PASSED — deliver.';
-  if (noProgress) return 'No real progress since the last round — deliver with your own judgment.';
+  if (noProgress) return `No real progress since the last round — ${DELIVER}`;
   if (round < MAX_ROUNDS) {
-    return `Round ${round}/${MAX_ROUNDS} — fix only a concrete defect you can point to in your diff, then call jev_review again with previous. If you find none, do not add validation, dependencies, or scope: deliver with your own judgment.`;
+    return `Round ${round}/${MAX_ROUNDS} — ${FIX_RULE}. Then call jev_review again with previous; if you find no concrete defect, ${DELIVER}`;
   }
-  return 'Max rounds reached — deliver with your own judgment.';
+  return `Max rounds reached — ${DELIVER}`;
 }
 
 async function runReview(args) {
@@ -228,7 +233,7 @@ async function runReview(args) {
 
   const apiKey = readApiKey();
   if (!apiKey) {
-    return { isError: true, content: [{ type: 'text', text: 'JEV_API_KEY is not set (checked process.env and ~/.env).' }] };
+    throw new Error('JEV_API_KEY is not set (checked process.env and ~/.env).');
   }
 
   const prior = parsePrevious(previous);
@@ -238,7 +243,7 @@ async function runReview(args) {
   if (Array.isArray(files) && files.length > 0) state.files = files;
   if (context) state.context = context;
 
-  const response = await callJev(apiKey, state, buildQuestions());
+  const response = await callJev(apiKey, state, QUESTIONS);
 
   const roundScores = DIMENSIONS.map((dim) => {
     const answer = response.answers?.[`${dim.key}_score`];
@@ -270,7 +275,7 @@ async function runReview(args) {
   // Bookkeeping for the next call's `previous`, appended to the same text the
   // model already reads (Claude Code's client drops `content` text whenever
   // `structuredContent` is also present, so round state travels inline instead).
-  lines.push(`<!-- jev:previous ${JSON.stringify({ rounds, task: pinnedTask }).replaceAll('>', '\\u003e')} -->`);
+  lines.push(`<!-- ${MARKER_TAG} ${JSON.stringify({ rounds, task: pinnedTask }).replaceAll('>', '\\u003e')} -->`);
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
@@ -278,10 +283,10 @@ async function runReview(args) {
 function parsePrevious(previous) {
   if (!previous) return { rounds: [] };
   const unreadable = new Error(
-    'Could not read "previous". Pass the last <!-- jev:previous ... --> line of the previous jev_review result unchanged.'
+    `Could not read "previous". Pass the last ${MARKER_HINT} line of the previous jev_review result unchanged.`
   );
   const text = String(previous);
-  const match = /jev:previous\s*(\{.*\})/s.exec(text);
+  const match = MARKER_PATTERN.exec(text);
   if (!match) throw unreadable;
   let parsed;
   try {
@@ -323,7 +328,7 @@ const TOOL_DEFINITION = {
       context: { type: 'string', description: 'Relevant conventions or business rules not evident from the diff.' },
       previous: {
         type: 'string',
-        description: "The last line of the previous jev_review call's text output (the `<!-- jev:previous ... -->` marker), pasted unchanged."
+        description: `The last line of the previous jev_review call's text output (the \`${MARKER_HINT}\` marker), pasted unchanged.`
       }
     },
     required: ['task', 'diff']
