@@ -14,6 +14,7 @@ const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const JEV_MODEL = 'jev-latest';
 const MAX_ROUNDS = 3;
 const PASS_SCORE = 8;
+const MIN_PROGRESS = 0.3;
 
 // The review framing (Q5/Q18): sent only to Jev, never to the coding model
 // (see context.mjs).
@@ -211,8 +212,9 @@ function renderTable(rounds) {
   ].join('\n');
 }
 
-function verdictLine(round, allPassed) {
+function verdictLine(round, allPassed, noProgress) {
   if (allPassed) return 'PASSED — deliver.';
+  if (noProgress) return 'No real progress since the last round — deliver with your own judgment.';
   if (round < MAX_ROUNDS) return `Round ${round}/${MAX_ROUNDS} — fix the failing dimensions and call jev_review again with previous.`;
   return 'Max rounds reached — deliver with your own judgment.';
 }
@@ -247,17 +249,22 @@ async function runReview(args) {
     return choice === 'no_material_issue' ? null : dim.weaknesses[choice] || choice;
   });
 
+  const previousRound = prior.rounds[prior.rounds.length - 1];
   const rounds = [...prior.rounds, roundScores];
   const round = rounds.length;
   const passedPerDim = roundScores.map((score) => score >= PASS_SCORE);
   const passed = passedPerDim.every(Boolean);
+  const hasProgress = previousRound
+    ? roundScores.some((score, i) => !passedPerDim[i] && Math.round((score - previousRound[i]) * 10) >= MIN_PROGRESS * 10)
+    : true;
+  const noProgress = round >= 2 && !passed && round < MAX_ROUNDS && !hasProgress;
 
   const lines = [renderTable(rounds), ''];
   DIMENSIONS.forEach((dim, i) => {
     if (!passedPerDim[i] && weaknesses[i]) lines.push(`${dim.label} ${roundScores[i].toFixed(1)}: ${weaknesses[i]}`);
   });
   if (lines.length > 2) lines.push('');
-  lines.push(verdictLine(round, passed));
+  lines.push(verdictLine(round, passed, noProgress));
   // Bookkeeping for the next call's `previous`, appended to the same text the
   // model already reads (Claude Code's client drops `content` text whenever
   // `structuredContent` is also present, so round state travels inline instead).
@@ -268,14 +275,19 @@ async function runReview(args) {
 
 function parsePrevious(previous) {
   if (!previous) return { rounds: [] };
-  const match = /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(String(previous));
-  if (!match) return { rounds: [] };
+  const unreadable = new Error(
+    'Could not read "previous". Pass the last <!-- jev:previous ... --> line of the previous jev_review result unchanged.'
+  );
+  const match = /<!--\s*jev:previous\s+(\{.*\})/s.exec(String(previous));
+  if (!match) throw unreadable;
+  let parsed;
   try {
-    const parsed = JSON.parse(match[1]);
-    return { rounds: Array.isArray(parsed.rounds) ? parsed.rounds : [], task: parsed.task };
+    parsed = JSON.parse(match[1]);
   } catch {
-    return { rounds: [] };
+    throw unreadable;
   }
+  if (!Array.isArray(parsed.rounds)) throw unreadable;
+  return { rounds: parsed.rounds, task: parsed.task };
 }
 
 const TOOL_DEFINITION = {
