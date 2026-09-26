@@ -280,11 +280,23 @@ function parsePrevious(previous) {
   const unreadable = new Error(
     'Could not read "previous". Pass the last <!-- jev:previous ... --> line of the previous jev_review result unchanged.'
   );
-  const match = /<!--\s*jev:previous\s+(\{.*\})/s.exec(String(previous));
-  if (!match) throw unreadable;
+  const text = String(previous);
+  const markerIndex = text.indexOf('jev:previous');
+  const braceStart = markerIndex === -1 ? -1 : text.indexOf('{', markerIndex);
+  if (braceStart === -1) throw unreadable;
+  let depth = 0;
+  let braceEnd = -1;
+  for (let i = braceStart; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) {
+      braceEnd = i;
+      break;
+    }
+  }
+  if (braceEnd === -1) throw unreadable;
   let parsed;
   try {
-    parsed = JSON.parse(match[1]);
+    parsed = JSON.parse(text.slice(braceStart, braceEnd + 1));
   } catch {
     throw unreadable;
   }
