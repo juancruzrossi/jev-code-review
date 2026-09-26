@@ -227,7 +227,10 @@ async function runReview(args) {
     return { isError: true, content: [{ type: 'text', text: 'JEV_API_KEY is not set (checked process.env and ~/.env).' }] };
   }
 
-  const state = { standard: STANDARD, task, diff };
+  const prior = parsePrevious(previous);
+  const pinnedTask = prior.task || task;
+
+  const state = { standard: STANDARD, task: pinnedTask, diff };
   if (Array.isArray(files) && files.length > 0) state.files = files;
   if (context) state.context = context;
 
@@ -244,8 +247,7 @@ async function runReview(args) {
     return choice === 'no_material_issue' ? null : dim.weaknesses[choice] || choice;
   });
 
-  const priorRounds = parsePrevious(previous);
-  const rounds = [...priorRounds, roundScores];
+  const rounds = [...prior.rounds, roundScores];
   const round = rounds.length;
   const passedPerDim = roundScores.map((score) => score >= PASS_SCORE);
   const passed = passedPerDim.every(Boolean);
@@ -259,20 +261,20 @@ async function runReview(args) {
   // Bookkeeping for the next call's `previous`, appended to the same text the
   // model already reads (Claude Code's client drops `content` text whenever
   // `structuredContent` is also present, so round state travels inline instead).
-  lines.push(`<!-- jev:previous ${JSON.stringify({ rounds })} -->`);
+  lines.push(`<!-- jev:previous ${JSON.stringify({ rounds, task: pinnedTask })} -->`);
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
 
 function parsePrevious(previous) {
-  if (!previous) return [];
+  if (!previous) return { rounds: [], task: null };
   const match = /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(String(previous));
-  if (!match) return [];
+  if (!match) return { rounds: [], task: null };
   try {
     const parsed = JSON.parse(match[1]);
-    return Array.isArray(parsed.rounds) ? parsed.rounds : [];
+    return { rounds: Array.isArray(parsed.rounds) ? parsed.rounds : [], task: parsed.task || null };
   } catch {
-    return [];
+    return { rounds: [], task: null };
   }
 }
 
