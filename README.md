@@ -8,7 +8,7 @@ Works with Claude Code, Codex, and OpenCode.
 
 1. The agent changes code.
 2. Jev scores the change on six dimensions.
-3. If a dimension fails, the agent fixes it and asks Jev again, up to 3 rounds.
+3. If a dimension fails, the agent fixes the concrete defect and asks Jev again, up to 3 rounds; it stops early when scores stop improving.
 4. The agent ends its answer with the score table. `Final` is the last round:
 
 ```

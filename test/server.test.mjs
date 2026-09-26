@@ -9,20 +9,21 @@ const FETCH_STUB = `
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
   process.stderr.write('TASK:' + JSON.stringify(body.state.task) + '\\n');
+  const score = Number(process.env.JEV_STUB_SCORE ?? 9);
   const answers = {};
   for (const key of Object.keys(body.questions)) {
-    answers[key] = key.endsWith('_score') ? { type: 'score', score: 9 } : { type: 'choice', choice: 'no_material_issue' };
+    answers[key] = key.endsWith('_score') ? { type: 'score', score } : { type: 'choice', choice: 'no_material_issue' };
   }
   return { ok: true, json: async () => ({ answers }) };
 };
 `;
 
-function runServer(requests) {
+function runServer(requests, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
       ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
-      { env: { ...process.env, JEV_API_KEY: 'test' } }
+      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv } }
     );
     let stdout = '';
     let stderr = '';
@@ -61,6 +62,14 @@ function extractMarker(stdout, id) {
   return JSON.parse(match[1]);
 }
 
+function extractResult(stdout, id) {
+  return stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((msg) => msg.id === id).result;
+}
+
 test('round 1 sends its own task and the marker carries it', async () => {
   const { stdout, stderr } = await runServer([call(1, { task: 'A', diff: 'd' })]);
   assert.deepEqual(extractTasks(stderr), ['A']);
@@ -89,4 +98,44 @@ test('a task containing --> survives the marker into round 2', async () => {
   const { stdout: stdout2, stderr: stderr2 } = await runServer([call(1, { task: 'B', diff: 'd', previous: marker })]);
   assert.deepEqual(extractTasks(stderr2), [task]);
   assert.equal(extractMarker(stdout2, 1).rounds.length, 2);
+});
+
+test('a marker truncated without --> still continues the round and keeps the pinned task', async () => {
+  const previous = `<!-- jev:previous ${JSON.stringify({ rounds: [[9, 9, 9, 9, 9, 9]], task: 'A' })}`;
+  const { stdout, stderr } = await runServer([call(1, { task: 'B', diff: 'd', previous })]);
+  assert.deepEqual(extractTasks(stderr), ['A']);
+  const marker = extractMarker(stdout, 1);
+  assert.equal(marker.task, 'A');
+  assert.equal(marker.rounds.length, 2);
+});
+
+test('an unreadable previous errors instead of silently resetting, without calling Jev', async () => {
+  const previous = 'garbage <!-- jev:previous {broken';
+  const { stdout, stderr } = await runServer([call(1, { task: 'B', diff: 'd', previous })]);
+  const result = extractResult(stdout, 1);
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /unchanged/);
+  assert.deepEqual(extractTasks(stderr), []);
+});
+
+test('a small score gain reports no real progress', async () => {
+  const previous = `<!-- jev:previous ${JSON.stringify({ rounds: [[7, 7, 7, 7, 7, 7]], task: 'A' })} -->`;
+  const { stdout } = await runServer([call(1, { task: 'A', diff: 'd', previous })], { JEV_STUB_SCORE: '6.1' });
+  const text = extractResult(stdout, 1).content[0].text;
+  assert.match(text, /No real progress/);
+});
+
+test('a real score gain reports the next round', async () => {
+  const previous = `<!-- jev:previous ${JSON.stringify({ rounds: [[7, 7, 7, 7, 7, 7]], task: 'A' })} -->`;
+  const { stdout } = await runServer([call(1, { task: 'A', diff: 'd', previous })], { JEV_STUB_SCORE: '6.4' });
+  const text = extractResult(stdout, 1).content[0].text;
+  assert.match(text, /Round 2\/3/);
+  assert.match(text, /concrete defect/);
+});
+
+test('round 3 reports max rounds reached regardless of progress', async () => {
+  const previous = `<!-- jev:previous ${JSON.stringify({ rounds: [[7, 7, 7, 7, 7, 7], [7.1, 7.1, 7.1, 7.1, 7.1, 7.1]], task: 'A' })} -->`;
+  const { stdout } = await runServer([call(1, { task: 'A', diff: 'd', previous })], { JEV_STUB_SCORE: '6.1' });
+  const text = extractResult(stdout, 1).content[0].text;
+  assert.match(text, /Max rounds reached/);
 });
