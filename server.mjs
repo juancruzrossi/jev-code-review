@@ -275,29 +275,17 @@ async function runReview(args) {
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
 
-function matchingBraceEnd(text, start) {
-  let depth = 0;
-  for (let i = start; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}' && --depth === 0) return i;
-  }
-  return -1;
-}
-
 function parsePrevious(previous) {
   if (!previous) return { rounds: [] };
   const unreadable = new Error(
     'Could not read "previous". Pass the last <!-- jev:previous ... --> line of the previous jev_review result unchanged.'
   );
   const text = String(previous);
-  const markerIndex = text.indexOf('jev:previous');
-  const braceStart = markerIndex === -1 ? -1 : text.indexOf('{', markerIndex);
-  if (braceStart === -1) throw unreadable;
-  const braceEnd = matchingBraceEnd(text, braceStart);
-  if (braceEnd === -1) throw unreadable;
+  const match = /jev:previous\s*(\{.*\})/s.exec(text);
+  if (!match) throw unreadable;
   let parsed;
   try {
-    parsed = JSON.parse(text.slice(braceStart, braceEnd + 1));
+    parsed = JSON.parse(match[1]);
   } catch {
     throw unreadable;
   }
