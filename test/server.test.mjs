@@ -130,6 +130,7 @@ test('a real score gain reports the next round', async () => {
   const { stdout } = await runServer([call(1, { task: 'A', diff: 'd', previous })], { JEV_STUB_SCORE: '6.4' });
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /Round 2\/3/);
+  assert.match(text, /concrete defect/);
 });
 
 test('round 3 reports max rounds reached regardless of progress', async () => {

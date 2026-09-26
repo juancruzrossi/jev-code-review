@@ -15,7 +15,7 @@ Tool available: \`jev_review\` (task, diff, files?, context?, previous?). Its te
 Mandatory rules:
 - \`task\` is the user's request as given, the same in every round; \`diff\` is only the real diff of the change (e.g. \`git diff\`), no hand-written pseudo-diffs or changes outside it — describe those in \`context\` instead.
 - After changing code in a turn (not docs, prose, or pure formatting) and before answering, call \`jev_review\` with the task and the diff.
-- If any dimension fails, fix it and call \`jev_review\` again, passing the previous result's \`<!-- jev:previous ... -->\` marker line unchanged as \`previous\`, until it reports PASSED or 3 rounds are reached.
+- If any dimension fails, fix only a concrete defect you can point to in your diff and call \`jev_review\` again, passing the previous result's \`<!-- jev:previous ... -->\` marker line unchanged as \`previous\`, until it reports PASSED, no real progress, or 3 rounds. Never add validation, dependencies, or scope just to satisfy a vague weakness; if you find no concrete defect, deliver.
 - A subagent that edits code runs this loop itself before returning; a read-only subagent skips it.
 - End your answer by pasting the tool's box-drawing table verbatim in a code block (omit the \`jev:previous\` marker line — that one is only for your next tool call, never for the user).`;
 

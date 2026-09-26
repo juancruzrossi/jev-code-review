@@ -215,7 +215,9 @@ function renderTable(rounds) {
 function verdictLine(round, allPassed, noProgress) {
   if (allPassed) return 'PASSED — deliver.';
   if (noProgress) return 'No real progress since the last round — deliver with your own judgment.';
-  if (round < MAX_ROUNDS) return `Round ${round}/${MAX_ROUNDS} — fix the failing dimensions and call jev_review again with previous.`;
+  if (round < MAX_ROUNDS) {
+    return `Round ${round}/${MAX_ROUNDS} — fix only a concrete defect you can point to in your diff, then call jev_review again with previous. If you find none, do not add validation, dependencies, or scope: deliver with your own judgment.`;
+  }
   return 'Max rounds reached — deliver with your own judgment.';
 }
 
