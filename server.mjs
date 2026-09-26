@@ -267,14 +267,14 @@ async function runReview(args) {
 }
 
 function parsePrevious(previous) {
-  if (!previous) return { rounds: [], task: null };
+  if (!previous) return { rounds: [] };
   const match = /<!--\s*jev:previous\s+(.*?)\s*-->/s.exec(String(previous));
-  if (!match) return { rounds: [], task: null };
+  if (!match) return { rounds: [] };
   try {
     const parsed = JSON.parse(match[1]);
-    return { rounds: Array.isArray(parsed.rounds) ? parsed.rounds : [], task: parsed.task || null };
+    return { rounds: Array.isArray(parsed.rounds) ? parsed.rounds : [], task: parsed.task };
   } catch {
-    return { rounds: [], task: null };
+    return { rounds: [] };
   }
 }
 
