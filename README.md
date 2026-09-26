@@ -72,6 +72,18 @@ Add to `~/.config/opencode/opencode.jsonc`:
 
 ## Uninstall
 
-- Claude Code: `/plugin uninstall jev-code-review@jev-code-review`
-- Codex: `codex plugin remove jev-code-review@jev-code-review`
-- OpenCode: remove the entry from `opencode.jsonc`
+### Claude Code
+
+```
+/plugin uninstall jev-code-review@jev-code-review
+```
+
+### Codex
+
+```
+codex plugin remove jev-code-review@jev-code-review
+```
+
+### OpenCode
+
+Remove `github:juancruzrossi/jev-code-review` from `plugin` in `~/.config/opencode/opencode.jsonc`.
