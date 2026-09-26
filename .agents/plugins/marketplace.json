@@ -1,0 +1,21 @@
+{
+  "name": "jev-code-review",
+  "interface": {
+    "displayName": "Jev Code Review"
+  },
+  "plugins": [
+    {
+      "name": "jev-code-review",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/juancruzrossi/jev-code-review.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

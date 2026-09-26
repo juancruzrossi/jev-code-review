@@ -1,0 +1,29 @@
+{
+  "name": "jev-code-review",
+  "version": "0.1.0",
+  "description": "Jev code review: a staff-engineer-level model that scores every code change and drives an autonomous fix-review loop.",
+  "author": {
+    "name": "Juan Cruz Rossi",
+    "url": "https://github.com/juancruzrossi"
+  },
+  "homepage": "https://github.com/juancruzrossi/jev-code-review",
+  "repository": "https://github.com/juancruzrossi/jev-code-review",
+  "license": "MIT",
+  "keywords": ["code-review", "mcp", "quality"],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Jev Code Review",
+    "shortDescription": "Autonomous Jev code-review loop",
+    "longDescription": "Scores every code change against a staff-engineer standard with Jev and loops fixes until it passes, via one MCP tool and session hooks.",
+    "developerName": "Juan Cruz Rossi",
+    "category": "Productivity",
+    "capabilities": ["Instructions", "Lifecycle hooks"],
+    "websiteURL": "https://github.com/juancruzrossi/jev-code-review",
+    "defaultPrompt": [
+      "Review this diff with Jev.",
+      "Implement this and use Jev until it passes."
+    ],
+    "brandColor": "#111111"
+  }
+}

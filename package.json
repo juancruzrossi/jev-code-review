@@ -1,0 +1,16 @@
+{
+  "name": "jev-code-review",
+  "version": "0.1.0",
+  "description": "Jev code review: a staff-engineer-level model that scores every code change and drives an autonomous fix-review loop.",
+  "type": "module",
+  "main": "./.opencode/plugins/jev-code-review.mjs",
+  "license": "MIT",
+  "author": {
+    "name": "Juan Cruz Rossi",
+    "url": "https://github.com/juancruzrossi"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juancruzrossi/jev-code-review.git"
+  }
+}
