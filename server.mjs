@@ -275,6 +275,15 @@ async function runReview(args) {
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
 
+function matchingBraceEnd(text, start) {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return i;
+  }
+  return -1;
+}
+
 function parsePrevious(previous) {
   if (!previous) return { rounds: [] };
   const unreadable = new Error(
@@ -284,15 +293,7 @@ function parsePrevious(previous) {
   const markerIndex = text.indexOf('jev:previous');
   const braceStart = markerIndex === -1 ? -1 : text.indexOf('{', markerIndex);
   if (braceStart === -1) throw unreadable;
-  let depth = 0;
-  let braceEnd = -1;
-  for (let i = braceStart; i < text.length; i++) {
-    if (text[i] === '{') depth++;
-    else if (text[i] === '}' && --depth === 0) {
-      braceEnd = i;
-      break;
-    }
-  }
+  const braceEnd = matchingBraceEnd(text, braceStart);
   if (braceEnd === -1) throw unreadable;
   let parsed;
   try {
@@ -300,7 +301,10 @@ function parsePrevious(previous) {
   } catch {
     throw unreadable;
   }
-  if (!Array.isArray(parsed.rounds)) throw unreadable;
+  const validRounds =
+    Array.isArray(parsed.rounds) &&
+    parsed.rounds.every((r) => Array.isArray(r) && r.length === DIMENSIONS.length && r.every(Number.isFinite));
+  if (!validRounds) throw unreadable;
   return { rounds: parsed.rounds, task: parsed.task };
 }
 
