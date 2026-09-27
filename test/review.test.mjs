@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -10,6 +11,7 @@ import {
   loadRepoRules,
   loadProjectInstructions,
   instructionFiles,
+  extractRules,
   askJev,
   findings,
   formatWhere,
@@ -230,6 +232,62 @@ test('instructionFiles does not follow a symlinked AGENTS.md or a path escaping 
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function cachePathFor(content) {
+  const key = createHash('sha1').update(content).digest('hex');
+  return path.join(tmpdir(), `jev-rules-${key}.json`);
+}
+
+test('extractRules keeps candidate lines at or above 0.5 probability and drops the rest', async () => {
+  const file = { path: 'AGENTS.md', dir: '', content: 'Never call console.log directly in this codebase.\nThis file describes our team process.\n' };
+  const cachePath = cachePathFor(file.content);
+  try {
+    const fetchImpl = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      const answers = {};
+      for (const key of Object.keys(body.questions)) answers[key] = { noul: key === 'line_1' ? 0.9 : 0.1 };
+      return { ok: true, json: async () => ({ answers }) };
+    };
+    const rules = await extractRules({ apiKey: 'k', file, fetchImpl });
+    assert.deepEqual(rules, ['Never call console.log directly in this codebase.']);
+  } finally {
+    rmSync(cachePath, { force: true });
+  }
+});
+
+test('extractRules reuses the content-hash cache on a second call, without calling fetch again', async () => {
+  const file = { path: 'AGENTS.md', dir: '', content: 'Never call console.log directly in this codebase.\n' };
+  const cachePath = cachePathFor(file.content);
+  try {
+    let calls = 0;
+    const fetchImpl = async (url, opts) => {
+      calls += 1;
+      const body = JSON.parse(opts.body);
+      const answers = {};
+      for (const key of Object.keys(body.questions)) answers[key] = { noul: 0.9 };
+      return { ok: true, json: async () => ({ answers }) };
+    };
+    const first = await extractRules({ apiKey: 'k', file, fetchImpl });
+    const second = await extractRules({ apiKey: 'k', file, fetchImpl });
+    assert.deepEqual(first, second);
+    assert.equal(calls, 1);
+  } finally {
+    rmSync(cachePath, { force: true });
+  }
+});
+
+test('extractRules returns [] and writes no cache when the request fails', async () => {
+  const file = { path: 'AGENTS.md', dir: '', content: 'Never call console.log directly in this codebase.\n' };
+  const cachePath = cachePathFor(file.content);
+  try {
+    const fetchImpl = async () => ({ ok: false, status: 500, json: async () => ({}) });
+    const rules = await extractRules({ apiKey: 'k', file, fetchImpl });
+    assert.deepEqual(rules, []);
+    assert.throws(() => readFileSync(cachePath, 'utf8'));
+  } finally {
+    rmSync(cachePath, { force: true });
   }
 });
 

@@ -218,6 +218,86 @@ export function loadRepoRules(cwd) {
   }));
 }
 
+const HEADING_LINE = /^#{1,6}\s/;
+const FENCE_LINE = /^(```|~~~)/;
+const TABLE_SEPARATOR_LINE = /^[\s|:-]+$/;
+const LIST_MARKER = /^(?:[-*+]|\d+\.)\s+/;
+
+export function candidateLines(content) {
+  const result = [];
+  for (const rawLine of content.split('\n')) {
+    if (result.length >= 80) break;
+    const trimmed = rawLine.trim();
+    if (trimmed === '') continue;
+    if (HEADING_LINE.test(trimmed)) continue;
+    if (FENCE_LINE.test(trimmed)) continue;
+    if (TABLE_SEPARATOR_LINE.test(trimmed) && trimmed.includes('-')) continue;
+    const stripped = trimmed.replace(LIST_MARKER, '').trim();
+    if (stripped.length < 12 || stripped.length > 400) continue;
+    result.push(stripped);
+  }
+  return result;
+}
+
+export async function extractRules({ apiKey, file, fetchImpl = fetch }) {
+  const cacheKey = createHash('sha1').update(file.content).digest('hex');
+  const cachePath = path.join(os.tmpdir(), `jev-rules-${cacheKey}.json`);
+
+  try {
+    const cached = JSON.parse(readFileSync(cachePath, 'utf8'));
+    if (Array.isArray(cached)) return cached;
+  } catch {
+    // cache miss or unreadable cache: fall through to extraction
+  }
+
+  const candidates = candidateLines(file.content);
+  if (candidates.length === 0) {
+    try {
+      writeFileSync(cachePath, JSON.stringify([]));
+    } catch {
+      // ignore: the next call re-extracts
+    }
+    return [];
+  }
+
+  const questions = {};
+  for (let i = 0; i < candidates.length; i += 1) {
+    const n = i + 1;
+    questions[`line_${n}`] = {
+      type: 'noul',
+      instructions: `Is line ${n} a rule about how code in this project must be written?`,
+      criteria: {
+        true: `Yes: line ${n} states how code must or must not be written.`,
+        false: `No: line ${n} is prose, process, or context, not a rule about code.`
+      }
+    };
+  }
+  const state = {
+    instructions_file: file.path,
+    lines: candidates.map((text, i) => `${i + 1}| ${text}`).join('\n')
+  };
+
+  let response;
+  try {
+    response = await callJev(apiKey, state, questions, fetchImpl);
+  } catch {
+    return [];
+  }
+
+  const kept = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const answer = response.answers?.[`line_${i + 1}`];
+    if (answer && typeof answer.noul === 'number' && answer.noul >= 0.5) kept.push(candidates[i]);
+  }
+
+  try {
+    writeFileSync(cachePath, JSON.stringify(kept));
+  } catch {
+    // ignore: the next call re-extracts
+  }
+  return kept;
+}
+
 export function buildQuestions(rules, lineIds) {
   const questions = {};
   for (const rule of rules) {
