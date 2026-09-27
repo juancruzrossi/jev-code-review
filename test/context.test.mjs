@@ -1,0 +1,127 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { makeRepo } from './git-repo-fixture.mjs';
+
+const contextPath = fileURLToPath(new URL('../context.mjs', import.meta.url));
+
+const FETCH_STUB = `
+globalThis.fetch = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  const prob = Number(process.env.JEV_STUB_PROB ?? 0.05);
+  const lineProb = Number(process.env.JEV_STUB_LINE_PROB ?? 0.9);
+  const answers = {};
+  for (const [key, q] of Object.entries(body.questions)) {
+    if (q.type === 'noul') answers[key] = { noul: prob };
+    if (q.type === 'choice') {
+      const ids = Object.keys(q.criteria);
+      const pick = ids[0];
+      answers[key] = { choice: pick, probabilities: { [pick]: lineProb } };
+    }
+  }
+  return { ok: true, json: async () => ({ answers }) };
+};
+`;
+
+function runHook(payload, extraEnv = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, contextPath],
+      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv } }
+    );
+    let stdout = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.on('error', reject);
+    child.on('close', () => resolve(stdout));
+    child.stdin.write(JSON.stringify(payload));
+    child.stdin.end();
+  });
+}
+
+test('a new untracked file edited by absolute path reports a repo-relative path', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Write', tool_input: { file_path: path.join(dir, 'b.js') } },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /^- b\.js:1 — defect 90%/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a PostToolUse Edit payload with a Fix-tier defect reports the right path:line', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'a.js') } },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a Fix-tier defect with a low line confidence flags the location as uncertain', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'a.js') } },
+      { JEV_STUB_PROB: '0.9', JEV_STUB_LINE_PROB: '0.3' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 \(line uncertain\) — defect 90%/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('below-tier answers produce no output', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'a.js') } },
+      { JEV_STUB_PROB: '0.05' }
+    );
+    assert.equal(stdout, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unrelated tool produces no output', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Bash', tool_input: { command: 'ls' } },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    assert.equal(stdout, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('SessionStart still emits the full context, unaffected by the PostToolUse handler', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    const stdout = await runHook({ hook_event_name: 'SessionStart', cwd: dir });
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /jev-code-review/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
