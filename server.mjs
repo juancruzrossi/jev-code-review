@@ -7,7 +7,7 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
+import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, loadProjectInstructions, PROJECT_RULES_RULE, askJev, findings, formatWhere, readApiKey } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -82,12 +82,15 @@ async function runReview(args) {
   const loop = findLoop(task);
   const pinnedTask = loop ? loop.task : task;
 
+  const projectInstructions = loadProjectInstructions(process.cwd());
   const rules = [...RULES, ...loadRepoRules(process.cwd())];
+  if (projectInstructions) rules.push(PROJECT_RULES_RULE);
   const ruleNames = rules.map((r) => r.name);
 
   const state = { task: pinnedTask };
   if (Array.isArray(files) && files.length > 0) state.files = files;
   if (context) state.context = context;
+  if (projectInstructions) state.project_rules = projectInstructions;
 
   const tagged = tagDiff(diff);
   const results = await askJev({ apiKey, state, rules, tagged });

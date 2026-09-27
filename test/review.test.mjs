@@ -8,6 +8,7 @@ import {
   tagDiff,
   buildQuestions,
   loadRepoRules,
+  loadProjectInstructions,
   askJev,
   findings,
   formatWhere,
@@ -119,6 +120,45 @@ test('loadRepoRules throws on invalid JSON', () => {
     mkdirSync(path.join(root, '.jev'));
     writeFileSync(path.join(root, '.jev', 'rules.json'), '{ not json');
     assert.throws(() => loadRepoRules(root), /must be a JSON list/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadProjectInstructions joins AGENTS.md and CLAUDE.md with a header line per file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    writeFileSync(path.join(root, 'AGENTS.md'), 'Never call console.log.');
+    writeFileSync(path.join(root, 'CLAUDE.md'), 'Money amounts are integers in cents.');
+    const text = loadProjectInstructions(root);
+    assert.match(text, /# AGENTS\.md/);
+    assert.match(text, /Never call console\.log\./);
+    assert.match(text, /# CLAUDE\.md/);
+    assert.match(text, /Money amounts are integers in cents\./);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadProjectInstructions returns null when neither file exists', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    assert.equal(loadProjectInstructions(root), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadProjectInstructions caps the joined text at 6000 characters', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    writeFileSync(path.join(root, 'AGENTS.md'), 'a'.repeat(4000));
+    writeFileSync(path.join(root, 'CLAUDE.md'), 'b'.repeat(4000));
+    const text = loadProjectInstructions(root);
+    assert.equal(text.length, 6000);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

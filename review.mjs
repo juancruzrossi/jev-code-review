@@ -119,6 +119,34 @@ function findGitRoot(cwd) {
   }
 }
 
+const PROJECT_INSTRUCTIONS_CAP = 6000;
+
+export function loadProjectInstructions(cwd) {
+  const root = findGitRoot(cwd);
+  if (!root) return null;
+  const parts = [];
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    let content;
+    try {
+      content = readFileSync(path.join(root, name), 'utf8');
+    } catch {
+      continue;
+    }
+    parts.push(`# ${name}\n${content}`);
+  }
+  if (parts.length === 0) return null;
+  return parts.join('\n\n').slice(0, PROJECT_INSTRUCTIONS_CAP);
+}
+
+export const PROJECT_RULES_RULE = {
+  name: 'project_rules',
+  needsTask: false,
+  locate: true,
+  ask: 'Does an added line break a rule written in `project_rules`?',
+  violation: "Yes: an added line breaks a rule stated in the project's AGENTS.md or CLAUDE.md.",
+  clean: 'No: no added line breaks a rule stated in `project_rules`, or those files state no rule about this code.'
+};
+
 export function loadRepoRules(cwd) {
   const root = findGitRoot(cwd);
   if (!root) return [];
@@ -468,9 +496,13 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
 
+  const projectInstructions = loadProjectInstructions(cwd);
   const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
+  if (projectInstructions) rules.push(PROJECT_RULES_RULE);
   const tagged = tagDiff(diff);
-  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
+  const state = { task: '' };
+  if (projectInstructions) state.project_rules = projectInstructions;
+  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
   const blockFindings = findings(results, rules, tagged).filter((f) => f.tier === 'block');
   if (blockFindings.length === 0) return '';
 
