@@ -7,7 +7,7 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
+import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -37,7 +37,7 @@ function renderTable(ruleNames, rounds) {
   const rows = ruleNames.map((name, row) => [
     name,
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
-    `${finals[row]}% ${finals[row] / 100 < FIX_TIER ? '✓' : '✗'}`
+    `${finals[row]}% ${finals[row] / 100 < BLOCK_TIER ? '✓' : '✗'}`
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);
@@ -60,11 +60,11 @@ function findingLine(finding) {
   return `- ${formatWhere(finding)}${finding.name} ${percent}%: ${finding.violation}`;
 }
 
-function verdictLine(round, fixFindings, noProgress) {
-  if (fixFindings.length === 0) return 'PASSED — deliver.';
+function verdictLine(round, blockFindings, noProgress) {
+  if (blockFindings.length === 0) return 'PASSED — deliver.';
   if (noProgress) return `No real progress since the last round — ${DELIVER}`;
   if (round < MAX_ROUNDS) {
-    return `Round ${round}/${MAX_ROUNDS} — fix the Fix items at those lines, then call jev_review again.`;
+    return `Round ${round}/${MAX_ROUNDS} — resolve each must-resolve item, then call jev_review again if you changed code.`;
   }
   return `Max rounds reached — ${DELIVER}`;
 }
@@ -99,30 +99,30 @@ async function runReview(args) {
   const rounds = [...priorRounds, currentPercents];
   const round = priorRounds.length + 1;
 
-  const fixFindings = found.filter((f) => f.tier === 'fix');
-  const verifyFindings = found.filter((f) => f.tier === 'verify');
+  const blockFindings = found.filter((f) => f.tier === 'block');
+  const adviseFindings = found.filter((f) => f.tier === 'advise');
 
   const previousRound = samePriorRules ? priorRounds[priorRounds.length - 1] : null;
-  const previousFixCount = previousRound ? previousRound.filter((p) => p / 100 >= FIX_TIER).length : null;
-  const hasProgress = previousRound ? fixFindings.length < previousFixCount : true;
-  const noProgress = round >= 2 && fixFindings.length > 0 && round < MAX_ROUNDS && !hasProgress;
+  const previousBlockCount = previousRound ? previousRound.filter((p) => p / 100 >= BLOCK_TIER).length : null;
+  const hasProgress = previousRound ? blockFindings.length < previousBlockCount : true;
+  const noProgress = round >= 2 && blockFindings.length > 0 && round < MAX_ROUNDS && !hasProgress;
 
   const lines = [renderTable(ruleNames, rounds), ''];
-  if (fixFindings.length > 0) {
-    lines.push('Fix:');
-    for (const f of fixFindings) lines.push(findingLine(f));
+  if (blockFindings.length > 0) {
+    lines.push('Must resolve — fix it at the line, or explain in your answer why it is not a real problem:');
+    for (const f of blockFindings) lines.push(findingLine(f));
     lines.push('');
   }
-  if (verifyFindings.length > 0) {
-    lines.push('Verify — open the line and confirm; change it only if the problem is real:');
-    for (const f of verifyFindings) lines.push(findingLine(f));
+  if (adviseFindings.length > 0) {
+    lines.push('Check — open the line and change it only if the problem is real:');
+    for (const f of adviseFindings) lines.push(findingLine(f));
     lines.push('');
   }
   if (lines[lines.length - 1] === '') lines.pop();
   lines.push('');
-  lines.push(verdictLine(round, fixFindings, noProgress));
+  lines.push(verdictLine(round, blockFindings, noProgress));
 
-  const terminal = fixFindings.length === 0 || noProgress || round >= MAX_ROUNDS;
+  const terminal = blockFindings.length === 0 || noProgress || round >= MAX_ROUNDS;
   if (terminal) openLoops.delete(pinnedTask);
   else openLoops.set(pinnedTask, { task: pinnedTask, rules: ruleNames, rounds });
 
@@ -132,7 +132,7 @@ async function runReview(args) {
 const TOOL_DEFINITION = {
   name: 'jev_review',
   description:
-    'Ask Jev (a staff-engineer-level review model) small yes/no rules about the current code change and locate the line each one breaks. Returns findings as `path:line — rule NN%` in a Fix tier (>= 80%) and a Verify tier (55-79%). Call again with the same task after fixing to continue the round loop.',
+    'Ask Jev (a staff-engineer-level review model) small yes/no rules about the current code change and locate the line each one breaks. Returns findings as `path:line — rule NN%` in a must-resolve tier (>= 90%) and a check tier (55-89%). Call again with the same task after fixing to continue the round loop.',
   inputSchema: {
     type: 'object',
     properties: {

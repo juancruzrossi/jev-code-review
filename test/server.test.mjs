@@ -14,7 +14,7 @@ index 111..222 100644
 +const b = 2;
 `;
 
-const RULE_NAMES = ['defect', 'missing_requirement', 'speculative_code', 'new_dependency', 'reinvents_existing', 'unrelated_change'];
+const RULE_NAMES = ['addresses_task', 'unrelated_change', 'needs_clarification', 'missing_requirement', 'defect'];
 
 const FETCH_STUB = `
 const RULE_NAMES = ${JSON.stringify(RULE_NAMES)};
@@ -123,46 +123,46 @@ function extractResult(stdout, id) {
 }
 
 test('a single call sends its own task, reports round 1, and never prints a marker', async () => {
-  const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.85' });
+  const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
   assert.deepEqual(extractTasks(stderr), ['A']);
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /Round 1\/3/);
   assert.doesNotMatch(text, /jev:previous/);
 });
 
-test('below the verify tier reports PASSED with no Fix or Verify section', async () => {
+test('below the advise tier reports PASSED with no Must-resolve or Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /PASSED — deliver\./);
-  assert.doesNotMatch(text, /^Fix:/m);
-  assert.doesNotMatch(text, /^Verify/m);
+  assert.doesNotMatch(text, /^Must resolve/m);
+  assert.doesNotMatch(text, /^Check/m);
 });
 
-test('a Fix-tier finding is printed with its path:line and the verdict names round 1', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.85' });
+test('a must-resolve finding is printed with its path:line and the verdict names round 1', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /^Fix:/m);
-  assert.match(text, /- a\.js:2 — defect 85%:/);
+  assert.match(text, /^Must resolve/m);
+  assert.match(text, /- a\.js:2 — defect 95%:/);
   assert.match(text, /Round 1\/3/);
 });
 
-test('a Fix-tier finding with a low line confidence flags the location as uncertain', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.85', JEV_STUB_LINE_PROB: '0.3' });
+test('a must-resolve finding with a low line confidence flags the location as uncertain', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95', JEV_STUB_LINE_PROB: '0.3' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /- a\.js:2 \(line uncertain\) — defect 85%:/);
+  assert.match(text, /- a\.js:2 \(line uncertain\) — defect 95%:/);
 });
 
-test('a Verify-tier finding prints the Verify section', async () => {
+test('an advise-tier finding prints the Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.6' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /^Verify — open the line/m);
+  assert.match(text, /^Check — open the line/m);
   assert.match(text, /- a\.js:2 — defect 60%:/);
 });
 
 test('two calls with the same task continue the loop as round 2 with two table columns', async () => {
   const { stdout, stderr } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.85' }
+    { JEV_STUB_PROB: '0.95' }
   );
   assert.deepEqual(extractTasks(stderr), ['A', 'A']);
   const text2 = extractResult(stdout, 2).content[0].text;
@@ -172,7 +172,7 @@ test('two calls with the same task continue the loop as round 2 with two table c
 test('a reworded task with exactly one open loop continues it', async () => {
   const { stdout, stderr } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A, but rephrased' })],
-    { JEV_STUB_PROB: '0.85' }
+    { JEV_STUB_PROB: '0.95' }
   );
   assert.deepEqual(extractTasks(stderr), ['A', 'A']);
   const text2 = extractResult(stdout, 2).content[0].text;
@@ -191,10 +191,10 @@ test('after PASSED the next call with the same task starts a new round 1', async
   assert.doesNotMatch(text2, /Round \d/);
 });
 
-test('a Fix count that does not drop reports no real progress', async () => {
+test('a block count that does not drop reports no real progress', async () => {
   const { stdout } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.85' }
+    { JEV_STUB_PROB: '0.95' }
   );
   const text2 = extractResult(stdout, 2).content[0].text;
   assert.match(text2, /No real progress/);
@@ -202,10 +202,10 @@ test('a Fix count that does not drop reports no real progress', async () => {
 
 test('three rounds hit max rounds, then the next call starts a new round 1', async () => {
   const roundProbs = JSON.stringify([
-    [0.9, 0.9, 0.9, 0.9, 0.9, 0.9],
-    [0.9, 0.05, 0.05, 0.05, 0.05, 0.05],
-    [0.9, 0.05, 0.05, 0.05, 0.05, 0.05],
-    [0.05, 0.05, 0.05, 0.05, 0.05, 0.05]
+    [0.9, 0.9, 0.9, 0.9, 0.9],
+    [0.9, 0.05, 0.05, 0.05, 0.05],
+    [0.9, 0.05, 0.05, 0.05, 0.05],
+    [0.05, 0.05, 0.05, 0.05, 0.05]
   ]);
   const { stdout } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A' }), call(3, { task: 'A' }), call(4, { task: 'A' })],
@@ -221,7 +221,7 @@ test('three rounds hit max rounds, then the next call starts a new round 1', asy
 test('two pipelined calls sent before either response arrives still resolve as round 1 then round 2', async () => {
   const { stdout } = await runServerPipelined(
     [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.85', JEV_STUB_DELAY_MS: '30' }
+    { JEV_STUB_PROB: '0.95', JEV_STUB_DELAY_MS: '30' }
   );
   const text1 = extractResult(stdout, 1).content[0].text;
   const text2 = extractResult(stdout, 2).content[0].text;
