@@ -4,8 +4,13 @@
 // Turns a diff into small yes/no ("noul") rules plus a line-locating
 // ("choice") question per rule, asks Jev, and reports findings in tiers.
 
+import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 export const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_MODEL = 'jev-latest';
@@ -296,4 +301,97 @@ export function findings(results, rules, tagged) {
       tier: tierFor(entry.probability)
     };
   });
+}
+
+export function readApiKey() {
+  if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
+  try {
+    process.loadEnvFile(path.join(os.homedir(), '.env'));
+  } catch {
+    // no ~/.env or it couldn't be read — fall through to the missing-key error below
+  }
+  return process.env.JEV_API_KEY || null;
+}
+
+export function filesFromPatchText(patchText) {
+  const files = [];
+  const pattern = /^\*\*\* (?:Add|Update) File: (.+)$/gm;
+  let match;
+  while ((match = pattern.exec(patchText))) files.push(match[1].trim());
+  return files;
+}
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('timeout')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function isTracked(cwd, file) {
+  try {
+    await execFileAsync('git', ['-C', cwd, 'ls-files', '--error-unmatch', file]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function gitDiffForFiles(cwd, files) {
+  const tracked = [];
+  const untracked = [];
+  for (const file of files) {
+    if (await isTracked(cwd, file)) tracked.push(file);
+    else untracked.push(file);
+  }
+
+  let diff = '';
+  if (tracked.length > 0) {
+    try {
+      const { stdout } = await execFileAsync('git', ['-C', cwd, 'diff', 'HEAD', '--', ...tracked], { maxBuffer: 10 * 1024 * 1024 });
+      diff += stdout;
+    } catch (error) {
+      if (typeof error.stdout === 'string') diff += error.stdout;
+    }
+  }
+  for (const file of untracked) {
+    try {
+      const { stdout } = await execFileAsync('git', ['-C', cwd, 'diff', '--no-index', '/dev/null', file], {
+        maxBuffer: 10 * 1024 * 1024
+      });
+      diff += stdout;
+    } catch (error) {
+      // --no-index exits 1 when there is a difference, which is the normal case for an untracked file
+      if (typeof error.stdout === 'string') diff += error.stdout;
+    }
+  }
+  return diff;
+}
+
+export async function lintAfterEdit({ cwd, files, apiKey, fetchImpl = fetch }) {
+  try {
+    return await withTimeout(runLintAfterEdit({ cwd, files, apiKey, fetchImpl }), 10_000);
+  } catch {
+    return '';
+  }
+}
+
+async function runLintAfterEdit({ cwd, files, apiKey, fetchImpl }) {
+  const diff = await gitDiffForFiles(cwd, files);
+  if (!diff) return '';
+
+  const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
+  const tagged = tagDiff(diff);
+  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
+  const fixFindings = findings(results, rules, tagged).filter((f) => f.tier === 'fix');
+  if (fixFindings.length === 0) return '';
+
+  const lines = ['Jev after edit:'];
+  for (const f of fixFindings) {
+    const where = f.where ? `${f.where.path}:${f.where.line} — ` : '';
+    lines.push(`- ${where}${f.name} ${Math.round(f.probability * 100)}%: ${f.violation}`);
+  }
+  lines.push('Check these lines now.');
+  return lines.join('\n');
 }

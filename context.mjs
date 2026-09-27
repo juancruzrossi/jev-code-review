@@ -7,6 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { filesFromPatchText, lintAfterEdit, readApiKey } from './review.mjs';
 
 export const MARKER_TAG = 'jev:previous';
 export const MARKER_HINT = `<!-- ${MARKER_TAG} ... -->`;
@@ -26,14 +27,44 @@ Mandatory rules:
 
 export const REMINDER = "Jev: if you changed a project's source code this turn, run jev_review before answering and paste its final table.";
 
-function main() {
+const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit'];
+
+function filesFromPostToolUse(data) {
+  const { tool_name: toolName, tool_input: toolInput } = data;
+  if (EDIT_TOOLS.includes(toolName)) {
+    return typeof toolInput?.file_path === 'string' ? [toolInput.file_path] : [];
+  }
+  if (toolName === 'apply_patch') {
+    const patchText = typeof toolInput?.input === 'string' ? toolInput.input : typeof toolInput?.patch === 'string' ? toolInput.patch : '';
+    return filesFromPatchText(patchText);
+  }
+  return [];
+}
+
+async function main() {
+  let data;
   try {
-    const data = JSON.parse(readFileSync(0, 'utf8') || '{}');
-    const event = data.hook_event_name;
+    data = JSON.parse(readFileSync(0, 'utf8') || '{}');
+  } catch {
+    return; // Never block the user's prompt or session over a malformed hook payload.
+  }
+  const event = data.hook_event_name;
+  try {
+    if (event === 'PostToolUse') {
+      const files = filesFromPostToolUse(data);
+      if (files.length === 0) return;
+      const apiKey = readApiKey();
+      if (!apiKey) return;
+      const additionalContext = await lintAfterEdit({ cwd: data.cwd || process.cwd(), files, apiKey });
+      if (additionalContext) {
+        process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } }));
+      }
+      return;
+    }
     const additionalContext = event === 'UserPromptSubmit' ? REMINDER : FULL;
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } }));
   } catch {
-    // Never block the user's prompt or session over a malformed hook payload.
+    // Never block the session over a hook failure.
   }
 }
 

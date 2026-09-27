@@ -6,25 +6,13 @@
 // Protocol: newline-delimited JSON-RPC 2.0 over stdin/stdout,
 // with zero runtime dependencies.
 
-import os from 'node:os';
-import path from 'node:path';
 import readline from 'node:readline';
-import { FIX_RULE, MARKER_HINT, MARKER_TAG } from './context.mjs';
-import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings } from './review.mjs';
+import { MARKER_HINT, MARKER_TAG } from './context.mjs';
+import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, readApiKey } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
 const MARKER_PATTERN = new RegExp(`${MARKER_TAG}\\s*(\\{.*\\})`, 's');
-
-function readApiKey() {
-  if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
-  try {
-    process.loadEnvFile(path.join(os.homedir(), '.env'));
-  } catch {
-    // no ~/.env or it couldn't be read — fall through to the missing-key error below
-  }
-  return process.env.JEV_API_KEY || null;
-}
 
 function padCenter(text, width) {
   const left = Math.floor((width - text.length) / 2);

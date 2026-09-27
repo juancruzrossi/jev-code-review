@@ -7,9 +7,19 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FULL } from '../../context.mjs';
+import { filesFromPatchText, lintAfterEdit, readApiKey } from '../../review.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverPath = path.resolve(__dirname, '../../server.mjs');
+
+const EDIT_TOOLS = ['edit', 'write', 'apply_patch', 'patch'];
+
+function filesFromOpencodeInput({ tool, args }) {
+  if (!EDIT_TOOLS.includes(tool)) return [];
+  if (typeof args?.filePath === 'string') return [args.filePath];
+  const patchText = typeof args?.patch === 'string' ? args.patch : typeof args?.input === 'string' ? args.input : '';
+  return filesFromPatchText(patchText);
+}
 
 export default async () => {
   return {
@@ -24,6 +34,15 @@ export default async () => {
       } else {
         output.system.push(FULL);
       }
+    },
+
+    'tool.execute.after': async (input, output) => {
+      const files = filesFromOpencodeInput(input);
+      if (files.length === 0) return;
+      const apiKey = readApiKey();
+      if (!apiKey) return;
+      const text = await lintAfterEdit({ cwd: process.cwd(), files, apiKey });
+      if (text) output.output += '\n\n' + text;
     }
   };
 };
