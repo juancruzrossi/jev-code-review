@@ -7,12 +7,18 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { MARKER_HINT, MARKER_TAG } from './context.mjs';
 import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
-const MARKER_PATTERN = new RegExp(`${MARKER_TAG}\\s*(\\{.*\\})`, 's');
+
+const openLoops = new Map();
+
+function findLoop(task) {
+  if (openLoops.has(task)) return openLoops.get(task);
+  if (openLoops.size === 1) return [...openLoops.values()][0];
+  return null;
+}
 
 function padCenter(text, width) {
   const left = Math.floor((width - text.length) / 2);
@@ -58,13 +64,13 @@ function verdictLine(round, fixFindings, noProgress) {
   if (fixFindings.length === 0) return 'PASSED — deliver.';
   if (noProgress) return `No real progress since the last round — ${DELIVER}`;
   if (round < MAX_ROUNDS) {
-    return `Round ${round}/${MAX_ROUNDS} — fix the Fix items at those lines, then call jev_review again with previous.`;
+    return `Round ${round}/${MAX_ROUNDS} — fix the Fix items at those lines, then call jev_review again.`;
   }
   return `Max rounds reached — ${DELIVER}`;
 }
 
 async function runReview(args) {
-  const { task, diff, files, context, previous } = args || {};
+  const { task, diff, files, context } = args || {};
   if (!task || typeof task !== 'string') throw new Error('jev_review requires a non-empty "task" string.');
   if (!diff || typeof diff !== 'string') throw new Error('jev_review requires a non-empty "diff" string.');
 
@@ -73,8 +79,8 @@ async function runReview(args) {
     throw new Error('JEV_API_KEY is not set (checked process.env and ~/.env).');
   }
 
-  const prior = parsePrevious(previous);
-  const pinnedTask = prior.task || task;
+  const loop = findLoop(task);
+  const pinnedTask = loop ? loop.task : task;
 
   const rules = [...RULES, ...loadRepoRules(process.cwd())];
   const ruleNames = rules.map((r) => r.name);
@@ -87,16 +93,16 @@ async function runReview(args) {
   const results = await askJev({ apiKey, state, rules, tagged });
   const found = findings(results, rules, tagged);
 
-  const samePriorRules = prior.rules && prior.rules.length === ruleNames.length && prior.rules.every((n, i) => n === ruleNames[i]);
+  const samePriorRules = loop && loop.rules.length === ruleNames.length && loop.rules.every((n, i) => n === ruleNames[i]);
   const currentPercents = found.map((f) => Math.round(f.probability * 100));
-  const priorRounds = samePriorRules ? prior.rounds : [];
+  const priorRounds = samePriorRules ? loop.rounds : [];
   const rounds = [...priorRounds, currentPercents];
-  const round = prior.rounds.length + 1;
+  const round = priorRounds.length + 1;
 
   const fixFindings = found.filter((f) => f.tier === 'fix');
   const verifyFindings = found.filter((f) => f.tier === 'verify');
 
-  const previousRound = samePriorRules ? prior.rounds[prior.rounds.length - 1] : null;
+  const previousRound = samePriorRules ? priorRounds[priorRounds.length - 1] : null;
   const previousFixCount = previousRound ? previousRound.filter((p) => p / 100 >= FIX_TIER).length : null;
   const hasProgress = previousRound ? fixFindings.length < previousFixCount : true;
   const noProgress = round >= 2 && fixFindings.length > 0 && round < MAX_ROUNDS && !hasProgress;
@@ -115,40 +121,18 @@ async function runReview(args) {
   if (lines[lines.length - 1] === '') lines.pop();
   lines.push('');
   lines.push(verdictLine(round, fixFindings, noProgress));
-  // Bookkeeping for the next call's `previous`, appended to the same text the
-  // model already reads (Claude Code's client drops `content` text whenever
-  // `structuredContent` is also present, so round state travels inline instead).
-  lines.push(`<!-- ${MARKER_TAG} ${JSON.stringify({ rules: ruleNames, rounds, task: pinnedTask }).replaceAll('>', '\\u003e')} -->`);
+
+  const terminal = fixFindings.length === 0 || noProgress || round >= MAX_ROUNDS;
+  if (terminal) openLoops.delete(pinnedTask);
+  else openLoops.set(pinnedTask, { task: pinnedTask, rules: ruleNames, rounds });
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
-}
-
-function parsePrevious(previous) {
-  if (!previous) return { rounds: [] };
-  const unreadable = new Error(
-    `Could not read "previous". Pass the last ${MARKER_HINT} line of the previous jev_review result unchanged.`
-  );
-  const text = String(previous);
-  const match = MARKER_PATTERN.exec(text);
-  if (!match) throw unreadable;
-  let parsed;
-  try {
-    parsed = JSON.parse(match[1]);
-  } catch {
-    throw unreadable;
-  }
-  const validRounds =
-    Array.isArray(parsed.rules) &&
-    Array.isArray(parsed.rounds) &&
-    parsed.rounds.every((r) => Array.isArray(r) && r.length === parsed.rules.length && r.every(Number.isFinite));
-  if (!validRounds) throw unreadable;
-  return { rules: parsed.rules, rounds: parsed.rounds, task: parsed.task };
 }
 
 const TOOL_DEFINITION = {
   name: 'jev_review',
   description:
-    'Ask Jev (a staff-engineer-level review model) small yes/no rules about the current code change and locate the line each one breaks. Returns findings as `path:line — rule NN%` in a Fix tier (>= 80%) and a Verify tier (55-79%). Call again with `previous` set to the last result to continue the loop after fixes.',
+    'Ask Jev (a staff-engineer-level review model) small yes/no rules about the current code change and locate the line each one breaks. Returns findings as `path:line — rule NN%` in a Fix tier (>= 80%) and a Verify tier (55-79%). Call again with the same task after fixing to continue the round loop.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -169,11 +153,7 @@ const TOOL_DEFINITION = {
           required: ['path', 'content']
         }
       },
-      context: { type: 'string', description: 'Relevant conventions or business rules not evident from the diff.' },
-      previous: {
-        type: 'string',
-        description: `The last line of the previous jev_review call's text output (the \`${MARKER_HINT}\` marker), pasted unchanged.`
-      }
+      context: { type: 'string', description: 'Relevant conventions or business rules not evident from the diff.' }
     },
     required: ['task', 'diff']
   },
