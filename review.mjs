@@ -6,7 +6,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -116,6 +116,137 @@ export function tagDiff(diff) {
   }
 
   return { text: out.join('\n'), lines };
+}
+
+const MAX_IMPORTED_FILES = 5;
+const MAX_IMPORTED_CHARS = 40_000;
+const JS_EXTS = ['.ts', '.tsx', '.js', '.mjs', '.jsx'];
+const JS_LIKE_EXTS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx']);
+
+function pyCandidates(dir, dottedName) {
+  const relPath = dottedName.split('.').join(path.sep);
+  return [path.join(dir, `${relPath}.py`), path.join(dir, relPath, '__init__.py')];
+}
+
+function resolvePyIn(dirs, dottedName) {
+  for (const dir of dirs) {
+    for (const candidate of pyCandidates(dir, dottedName)) {
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function pythonImportCandidates(content, fileDir, root) {
+  const candidates = [];
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim();
+    const plainImport = /^import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*)/.exec(line);
+    if (plainImport) {
+      for (const part of plainImport[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        const resolved = resolvePyIn([fileDir, root], name);
+        if (resolved) candidates.push(resolved);
+      }
+      continue;
+    }
+    const fromImport = /^from\s+(\.*)([A-Za-z_][\w.]*)?\s+import\s+(.+)$/.exec(line);
+    if (fromImport) {
+      const [, dots, moduleName, importedNames] = fromImport;
+      if (dots.length === 0) {
+        if (moduleName) {
+          const resolved = resolvePyIn([fileDir, root], moduleName);
+          if (resolved) candidates.push(resolved);
+        }
+        continue;
+      }
+      let baseDir = fileDir;
+      for (let i = 1; i < dots.length; i++) baseDir = path.dirname(baseDir);
+      if (moduleName) {
+        const resolved = resolvePyIn([baseDir], moduleName);
+        if (resolved) candidates.push(resolved);
+      } else {
+        for (const part of importedNames.split(',')) {
+          const name = part.trim().split(/\s+as\s+/)[0].trim();
+          if (!name) continue;
+          const resolved = resolvePyIn([baseDir], name);
+          if (resolved) candidates.push(resolved);
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
+function resolveJsModule(fileDir, spec) {
+  const base = path.resolve(fileDir, spec);
+  const candidates = [base, ...JS_EXTS.map((ext) => `${base}${ext}`), ...JS_EXTS.map((ext) => path.join(base, `index${ext}`))];
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function jsImportCandidates(content, fileDir) {
+  const specs = [];
+  const patterns = [
+    /\bfrom\s+['"]([^'"]+)['"]/g,
+    /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g
+  ];
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(content)) !== null) specs.push(match[1]);
+  }
+  const candidates = [];
+  for (const spec of specs) {
+    if (!spec.startsWith('./') && !spec.startsWith('../')) continue;
+    const resolved = resolveJsModule(fileDir, spec);
+    if (resolved) candidates.push(resolved);
+  }
+  return candidates;
+}
+
+export function importedFiles(root, changedPaths) {
+  const excluded = new Set(changedPaths.map((p) => path.resolve(root, p)));
+  const result = [];
+  let totalChars = 0;
+
+  for (const changedPath of changedPaths) {
+    const abs = path.resolve(root, changedPath);
+    let content;
+    try {
+      content = readFileSync(abs, 'utf8');
+    } catch {
+      continue;
+    }
+    const ext = path.extname(changedPath);
+    const fileDir = path.dirname(abs);
+    let candidates = [];
+    if (ext === '.py') candidates = pythonImportCandidates(content, fileDir, root);
+    else if (JS_LIKE_EXTS.has(ext)) candidates = jsImportCandidates(content, fileDir);
+
+    for (const candidate of candidates) {
+      const rel = path.relative(root, candidate);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
+      if (excluded.has(candidate)) continue;
+      excluded.add(candidate);
+      let text;
+      try {
+        text = readFileSync(candidate, 'utf8');
+      } catch {
+        continue;
+      }
+      result.push({ path: rel, content: text });
+      totalChars += text.length;
+      if (result.length >= MAX_IMPORTED_FILES || totalChars >= MAX_IMPORTED_CHARS) return result;
+    }
+  }
+  return result;
 }
 
 function findGitRoot(cwd) {
@@ -479,7 +610,12 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
 
   const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
   const tagged = tagDiff(diff);
-  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
+  const state = { task: '' };
+  try {
+    const extraFiles = importedFiles(cwd, files);
+    if (extraFiles.length > 0) state.files = extraFiles;
+  } catch {}
+  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
   const fixFindings = findings(results, rules, tagged).filter((f) => f.tier === 'fix');
   if (fixFindings.length === 0) return '';
 

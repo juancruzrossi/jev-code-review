@@ -15,6 +15,7 @@ import {
   changedFiles,
   filesToLint,
   lintAfterEdit,
+  importedFiles,
   RULES,
   MAX_CHOICES,
   LINE_CONFIDENCE
@@ -302,6 +303,127 @@ test('filesToLint returns changed files once, then only re-edited files, per ses
 
     const otherSession = await filesToLint({ cwd: dir, sessionId: 's2' });
     assert.deepEqual(new Set(otherSession), new Set(['a.js', 'b.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles resolves a plain python import to a sibling module', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-py-'));
+  try {
+    mkdirSync(path.join(root, 'scripts'));
+    writeFileSync(path.join(root, 'scripts', 'common.py'), 'def parse(): pass\n');
+    writeFileSync(path.join(root, 'scripts', 'frequency.py'), 'import common\n\ncommon.parse()\n');
+    const files = importedFiles(root, ['scripts/frequency.py']);
+    assert.deepEqual(files, [{ path: path.join('scripts', 'common.py'), content: 'def parse(): pass\n' }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles resolves a relative python import to a file in the same directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-py-rel-'));
+  try {
+    mkdirSync(path.join(root, 'pkg'));
+    writeFileSync(path.join(root, 'pkg', 'util.py'), 'X = 1\n');
+    writeFileSync(path.join(root, 'pkg', 'main.py'), 'from .util import X\n');
+    const files = importedFiles(root, ['pkg/main.py']);
+    assert.deepEqual(files, [{ path: path.join('pkg', 'util.py'), content: 'X = 1\n' }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles resolves relative JS/TS imports, guessing extensions', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-js-'));
+  try {
+    mkdirSync(path.join(root, 'src'));
+    mkdirSync(path.join(root, 'lib'));
+    writeFileSync(path.join(root, 'src', 'format.js'), 'export const f = () => 1;\n');
+    writeFileSync(path.join(root, 'lib', 'money.ts'), 'export const money = 1;\n');
+    writeFileSync(
+      path.join(root, 'src', 'app.js'),
+      "import { f } from './format.js';\nimport { money } from '../lib/money';\n"
+    );
+    const files = importedFiles(root, ['src/app.js']);
+    assert.deepEqual(
+      new Set(files.map((f) => f.path)),
+      new Set([path.join('src', 'format.js'), path.join('lib', 'money.ts')])
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles ignores package imports and imports that resolve to a missing file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-noresolve-'));
+  try {
+    writeFileSync(path.join(root, 'a.py'), 'import requests\nfrom .missing import x\n');
+    writeFileSync(path.join(root, 'a.js'), "import { x } from 'react';\nimport { y } from './missing.js';\n");
+    assert.deepEqual(importedFiles(root, ['a.py']), []);
+    assert.deepEqual(importedFiles(root, ['a.js']), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles stops after 5 files', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-files-'));
+  try {
+    const importLines = [];
+    for (let i = 0; i < 7; i++) {
+      writeFileSync(path.join(root, `mod${i}.py`), `X${i} = ${i}\n`);
+      importLines.push(`import mod${i}`);
+    }
+    writeFileSync(path.join(root, 'main.py'), `${importLines.join('\n')}\n`);
+    const files = importedFiles(root, ['main.py']);
+    assert.equal(files.length, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('importedFiles stops once the total content reaches 40,000 characters', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-chars-'));
+  try {
+    const big = 'x'.repeat(30000);
+    writeFileSync(path.join(root, 'mod0.py'), `X = "${big}"\n`);
+    writeFileSync(path.join(root, 'mod1.py'), `Y = "${big}"\n`);
+    writeFileSync(path.join(root, 'mod2.py'), `Z = "${big}"\n`);
+    writeFileSync(path.join(root, 'main.py'), 'import mod0\nimport mod1\nimport mod2\n');
+    const files = importedFiles(root, ['main.py']);
+    assert.ok(files.length < 3);
+    assert.ok(files.reduce((sum, f) => sum + f.content.length, 0) >= 40000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lintAfterEdit merges the local imports of the linted files into state.files', async () => {
+  const dir = makeRepo('jev-lint-imports-');
+  try {
+    writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
+    execFileSync('git', ['-C', dir, 'add', 'common.js']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add common']);
+    writeFileSync(path.join(dir, 'main.js'), "import { helper } from './common.js';\nhelper();\n");
+
+    let sentFiles = null;
+    const fetchImpl = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      sentFiles = body.state.files;
+      const answers = {};
+      for (const [key, q] of Object.entries(body.questions)) {
+        if (q.type === 'noul') answers[key] = { noul: 0.1 };
+        if (q.type === 'choice') {
+          const ids = Object.keys(q.criteria);
+          answers[key] = { choice: ids[0], probabilities: { [ids[0]]: 0.9 } };
+        }
+      }
+      return { ok: true, json: async () => ({ answers }) };
+    };
+
+    await lintAfterEdit({ cwd: dir, sessionId: 'sY', apiKey: 'k', fetchImpl });
+    assert.deepEqual(sentFiles, [{ path: 'common.js', content: 'export const helper = () => 1;\n' }]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
