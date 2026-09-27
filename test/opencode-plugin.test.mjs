@@ -22,7 +22,7 @@ function stubFetch(probability) {
   };
 }
 
-test('tool.execute.after appends the lint text only for a Fix-tier finding', async () => {
+test('tool.execute.after appends the lint text for any tool after a file change', async () => {
   const dir = makeRepo('jev-opencode-repo-');
   const originalFetch = globalThis.fetch;
   const originalCwd = process.cwd();
@@ -35,7 +35,7 @@ test('tool.execute.after appends the lint text only for a Fix-tier finding', asy
 
     const hooks = await plugin();
     const output = { output: 'original output' };
-    await hooks['tool.execute.after']({ tool: 'edit', args: { filePath: path.join(dir, 'a.js') } }, output);
+    await hooks['tool.execute.after']({ tool: 'bash', sessionID: 's1', args: { command: 'ls' } }, output);
 
     assert.match(output.output, /original output/);
     assert.match(output.output, /Jev after edit:/);
@@ -62,7 +62,7 @@ test('tool.execute.after leaves output untouched below the Fix tier', async () =
 
     const hooks = await plugin();
     const output = { output: 'original output' };
-    await hooks['tool.execute.after']({ tool: 'edit', args: { filePath: path.join(dir, 'a.js') } }, output);
+    await hooks['tool.execute.after']({ tool: 'edit', sessionID: 's1', args: { filePath: path.join(dir, 'a.js') } }, output);
 
     assert.equal(output.output, 'original output');
   } finally {
@@ -74,7 +74,7 @@ test('tool.execute.after leaves output untouched below the Fix tier', async () =
   }
 });
 
-test('tool.execute.after reads apply_patch files from args.patchText (OpenCode)', async () => {
+test('a second call with no new change leaves output unchanged', async () => {
   const dir = makeRepo('jev-opencode-repo-');
   const originalFetch = globalThis.fetch;
   const originalCwd = process.cwd();
@@ -85,13 +85,14 @@ test('tool.execute.after reads apply_patch files from args.patchText (OpenCode)'
     process.env.JEV_API_KEY = 'test';
     process.chdir(dir);
 
-    const patchText = `*** Begin Patch\n*** Update File: ${path.join(dir, 'a.js')}\n@@\n-const b = 2;\n+const b = 3;\n*** End Patch`;
     const hooks = await plugin();
-    const output = { output: 'original output' };
-    await hooks['tool.execute.after']({ tool: 'apply_patch', args: { patchText } }, output);
+    const first = { output: 'original output' };
+    await hooks['tool.execute.after']({ tool: 'edit', sessionID: 's2', args: {} }, first);
+    assert.match(first.output, /Jev after edit:/);
 
-    assert.match(output.output, /Jev after edit:/);
-    assert.match(output.output, /a\.js:2 — defect 90%/);
+    const second = { output: 'original output' };
+    await hooks['tool.execute.after']({ tool: 'edit', sessionID: 's2', args: {} }, second);
+    assert.equal(second.output, 'original output');
   } finally {
     process.chdir(originalCwd);
     globalThis.fetch = originalFetch;
@@ -99,11 +100,4 @@ test('tool.execute.after reads apply_patch files from args.patchText (OpenCode)'
     else process.env.JEV_API_KEY = originalKey;
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('tool.execute.after ignores tools it does not cover', async () => {
-  const hooks = await plugin();
-  const output = { output: 'original output' };
-  await hooks['tool.execute.after']({ tool: 'bash', args: { command: 'ls' } }, output);
-  assert.equal(output.output, 'original output');
 });

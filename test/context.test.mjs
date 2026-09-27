@@ -42,16 +42,45 @@ function runHook(payload, extraEnv = {}) {
   });
 }
 
-test('a new untracked file edited by absolute path reports a repo-relative path', async () => {
+test('a Bash payload after appending to a tracked file reports the right path:line (Claude Code)', async () => {
   const dir = makeRepo('jev-hook-repo-');
   try {
-    writeFileSync(path.join(dir, 'b.js'), 'const b = 2;\n');
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
     const stdout = await runHook(
-      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Write', tool_input: { file_path: path.join(dir, 'b.js') } },
+      {
+        hook_event_name: 'PostToolUse',
+        cwd: dir,
+        session_id: 's1',
+        tool_name: 'Bash',
+        tool_input: { command: "cat >> a.js <<'EOF'\nconst b = 2;\nEOF" }
+      },
       { JEV_STUB_PROB: '0.9' }
     );
     const message = JSON.parse(stdout);
-    assert.match(message.hookSpecificOutput.additionalContext, /^- b\.js:1 — defect 90%/m);
+    assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a Codex apply_patch payload with tool_input.command reports the right path:line', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      {
+        hook_event_name: 'PostToolUse',
+        cwd: dir,
+        session_id: 's1',
+        tool_name: 'apply_patch',
+        tool_input: { command: '*** Begin Patch\n*** Update File: a.js\n@@\n-const b = 2;\n+const b = 3;\n*** End Patch' }
+      },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -102,7 +131,7 @@ test('below-tier answers produce no output', async () => {
   }
 });
 
-test('an unrelated tool produces no output', async () => {
+test('a read-only tool call with no file change produces no output', async () => {
   const dir = makeRepo('jev-hook-repo-');
   try {
     const stdout = await runHook(

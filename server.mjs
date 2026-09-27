@@ -7,7 +7,7 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
+import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey, siblingFiles } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -90,6 +90,14 @@ async function runReview(args) {
   if (context) state.context = context;
 
   const tagged = tagDiff(diff);
+  const changedPaths = [...new Set([...tagged.lines.values()].map((l) => l.path))];
+  try {
+    const extraFiles = siblingFiles(process.cwd(), changedPaths);
+    const existingPaths = new Set((state.files || []).map((f) => f.path));
+    const merged = extraFiles.filter((f) => !existingPaths.has(f.path));
+    if (merged.length > 0) state.files = [...(state.files || []), ...merged];
+  } catch {}
+
   const results = await askJev({ apiKey, state, rules, tagged });
   const found = findings(results, rules, tagged);
 

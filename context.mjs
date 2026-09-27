@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { extractPatchText, filesFromPatchText, lintAfterEdit, readApiKey } from './review.mjs';
+import { lintAfterEdit, readApiKey } from './review.mjs';
 
 export const FIX_RULE =
   'fix only a concrete defect you can point to in your diff; never add validation, dependencies, or scope just to satisfy a vague weakness';
@@ -25,19 +25,6 @@ Mandatory rules:
 
 export const REMINDER = "Jev: if you changed a project's source code this turn, run jev_review before answering and paste its final table.";
 
-const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit'];
-
-function filesFromPostToolUse(data) {
-  const { tool_name: toolName, tool_input: toolInput } = data;
-  if (EDIT_TOOLS.includes(toolName)) {
-    return typeof toolInput?.file_path === 'string' ? [toolInput.file_path] : [];
-  }
-  if (toolName === 'apply_patch') {
-    return filesFromPatchText(extractPatchText(toolInput));
-  }
-  return [];
-}
-
 async function main() {
   let data;
   try {
@@ -48,11 +35,9 @@ async function main() {
   const event = data.hook_event_name;
   try {
     if (event === 'PostToolUse') {
-      const files = filesFromPostToolUse(data);
-      if (files.length === 0) return;
       const apiKey = readApiKey();
       if (!apiKey) return;
-      const additionalContext = await lintAfterEdit({ cwd: data.cwd || process.cwd(), files, apiKey });
+      const additionalContext = await lintAfterEdit({ cwd: data.cwd || process.cwd(), sessionId: data.session_id ?? '', apiKey });
       if (additionalContext) {
         process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext } }));
       }

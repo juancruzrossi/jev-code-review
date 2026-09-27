@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const serverPath = fileURLToPath(new URL('../server.mjs', import.meta.url));
@@ -23,6 +26,7 @@ const __roundProbs = process.env.JEV_STUB_ROUND_PROBS ? JSON.parse(process.env.J
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
   process.stderr.write('TASK:' + JSON.stringify(body.state.task) + '\\n');
+  process.stderr.write('FILES:' + JSON.stringify((body.state.files || []).map((f) => f.path)) + '\\n');
   const delayMs = Number(process.env.JEV_STUB_DELAY_MS ?? 0);
   if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   const round = __call;
@@ -50,12 +54,12 @@ globalThis.fetch = async (url, opts) => {
 };
 `;
 
-function runServer(requests, extraEnv = {}) {
+function runServer(requests, extraEnv = {}, spawnOptions = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
       ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
-      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv } }
+      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv }, ...spawnOptions }
     );
     let stdout = '';
     let stderr = '';
@@ -112,6 +116,13 @@ function extractTasks(stderr) {
     .split('\n')
     .filter((line) => line.startsWith('TASK:'))
     .map((line) => JSON.parse(line.slice(5)));
+}
+
+function extractFiles(stderr) {
+  return stderr
+    .split('\n')
+    .filter((line) => line.startsWith('FILES:'))
+    .map((line) => JSON.parse(line.slice(6)));
 }
 
 function extractResult(stdout, id) {
@@ -227,6 +238,75 @@ test('two pipelined calls sent before either response arrives still resolve as r
   const text2 = extractResult(stdout, 2).content[0].text;
   assert.doesNotMatch(text1, /│\s*Round 1\s*│\s*Final\s*│/);
   assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
+});
+
+test('a sibling file with the same extension as a changed file merges it into state.files', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jev-server-import-'));
+  try {
+    writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
+    writeFileSync(path.join(dir, 'agent.js'), 'export const known = 1;\n');
+    writeFileSync(path.join(dir, 'a.js'), "const a = 1;\nimport { helper } from './common.js';\n");
+    const importDiff = `diff --git a/a.js b/a.js
+index 111..222 100644
+--- a/a.js
++++ b/a.js
+@@ -1,1 +1,2 @@
+ const a = 1;
++import { helper } from './common.js';
+`;
+    const req = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'jev_review',
+        arguments: {
+          task: 'A',
+          diff: importDiff,
+          files: [{ path: 'agent.js', content: 'export const known = 1;\n' }]
+        }
+      }
+    };
+    const { stderr } = await runServer([req], { JEV_STUB_PROB: '0.05' }, { cwd: dir });
+    const [files] = extractFiles(stderr);
+    assert.deepEqual(new Set(files), new Set(['agent.js', 'common.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a file already passed by the agent is not duplicated when it is also a sibling', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jev-server-import-dup-'));
+  try {
+    writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
+    writeFileSync(path.join(dir, 'a.js'), "const a = 1;\nimport { helper } from './common.js';\n");
+    const importDiff = `diff --git a/a.js b/a.js
+index 111..222 100644
+--- a/a.js
++++ b/a.js
+@@ -1,1 +1,2 @@
+ const a = 1;
++import { helper } from './common.js';
+`;
+    const req = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'jev_review',
+        arguments: {
+          task: 'A',
+          diff: importDiff,
+          files: [{ path: 'common.js', content: 'export const helper = () => 1;\n' }]
+        }
+      }
+    };
+    const { stderr } = await runServer([req], { JEV_STUB_PROB: '0.05' }, { cwd: dir });
+    const [files] = extractFiles(stderr);
+    assert.deepEqual(files, ['common.js']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a call with a stray previous argument works', async () => {

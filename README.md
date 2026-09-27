@@ -6,28 +6,30 @@ Works with Claude Code, Codex, and OpenCode.
 
 ## How it works
 
-1. The agent changes code.
-2. Jev asks a small yes/no rule for each concern and, when a rule is true, which added line breaks it.
-3. Findings land in two tiers: Fix (80% or more) must be fixed; Verify (55-79%) should be opened and changed only if the problem is real. The agent fixes Fix items and asks Jev again, up to 3 rounds; it stops early when the Fix count stops dropping.
-4. The agent ends its answer with the table. `Final` is the last round:
+1. The agent changes code. After each edit, Jev checks the new lines and speaks only when it is confident a line is wrong.
+2. Before answering, the agent asks Jev to review the whole change against your request.
+3. Jev answers with findings: the file and line, the rule it breaks, and how sure it is. Fix findings (75% or more) get fixed; Verify findings (55-74%) get checked and changed only if the problem is real.
+4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌─────────────────────┬─────────┬───────┐
-│         Rule         │ Round 1 │ Final │
-├─────────────────────┼─────────┼───────┤
-│ defect               │ 62%     │ 12% ✓ │
-│ missing_requirement  │ 5%      │ 5%  ✓ │
-│ speculative_code     │ 30%     │ 30% ✓ │
-│ new_dependency        │ 2%      │ 2%  ✓ │
-│ reinvents_existing    │ 8%      │ 8%  ✓ │
-│ unrelated_change      │ 4%      │ 4%  ✓ │
-└─────────────────────┴─────────┴───────┘
+┌─────────────────────┬───────┐
+│        Rule         │ Final │
+├─────────────────────┼───────┤
+│ defect              │ 92% ✗ │
+│ missing_requirement │ 15% ✓ │
+│ speculative_code    │ 16% ✓ │
+│ new_dependency      │ 5% ✓  │
+│ reinvents_existing  │ 15% ✓ │
+│ unrelated_change    │ 16% ✓ │
+└─────────────────────┴───────┘
 
 Fix:
-- a.js:12 — defect 62%: For some input the task or the callers can pass, an added line returns a wrong result...
+- math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, ...
 ```
 
-You don't need to ask for it. The agent does it on every code change.
+You don't need to ask for it, and your `AGENTS.md` or `CLAUDE.md` doesn't need to mention it. The agent does it on every code change.
+
+Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
 ## Built-in rules
 

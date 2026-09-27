@@ -5,7 +5,8 @@
 // ("choice") question per rule, asks Jev, and reports findings in tiers.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -14,7 +15,7 @@ const execFileAsync = promisify(execFile);
 
 export const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_MODEL = 'jev-latest';
-export const FIX_TIER = 0.8;
+export const FIX_TIER = 0.75;
 export const VERIFY_TIER = 0.55;
 export const MAX_CHOICES = 255;
 export const LINE_CONFIDENCE = 0.4;
@@ -24,45 +25,55 @@ export const RULES = [
     name: 'defect',
     needsTask: false,
     locate: true,
+    ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",
     violation:
-      'For some input the task or the callers can pass, an added line returns a wrong result, leaves wrong state, throws when it should not, or fails to throw when it should.',
-    clean: 'Every added line behaves correctly for the inputs it can receive; style, performance and hypothetical misuse do not count.'
+      "Yes: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.",
+    clean: "No: every added line behaves correctly for every input it can receive; style, performance and hypothetical misuse do not count."
   },
   {
     name: 'missing_requirement',
     needsTask: true,
     locate: false,
-    violation: 'Something the task explicitly asks for is not implemented anywhere in the diff.',
-    clean: 'Everything the task explicitly asks for is implemented in the diff.'
+    ask: "Is something the task explicitly asks for absent from the diff?",
+    violation:
+      "Yes: a behavior, flag, output, test, or file that the task names explicitly is not implemented anywhere in the diff.",
+    clean: "No: everything the task names explicitly is implemented in the diff."
   },
   {
     name: 'speculative_code',
     needsTask: true,
     locate: true,
+    ask: "Does the diff add behavior the task did not ask for?",
     violation:
-      'An added line introduces a feature, option, parameter, branch, or validation that the task did not ask for and nothing shown needs, such as validating data this same program just wrote.',
-    clean: 'Every added line is needed by the task or by code shown.'
+      "Yes: it adds an option, flag, parameter, environment or config setting, cache, retry, fallback, or validation of data this program itself produced, which the task never mentions and no shown code needs.",
+    clean: "No: every added behavior is asked for by the task or required by shown code; tests and docs for the requested behavior count as asked for."
   },
   {
     name: 'new_dependency',
     needsTask: false,
     locate: true,
-    violation: 'The diff adds a third-party package, dependency, or test framework to a manifest or lockfile that the task did not ask for.',
-    clean: 'The diff adds no new third-party dependency, or the task asked for it.'
+    ask: "Does the diff add a third-party dependency the task did not ask for?",
+    violation:
+      "Yes: a manifest or lockfile (package.json, requirements.txt, pyproject.toml, go.mod, Cargo.toml) gains a third-party package, library, or test framework that the task never mentions.",
+    clean: "No: no third-party package is added, or the task asked for it."
   },
   {
     name: 'reinvents_existing',
     needsTask: false,
     locate: true,
-    violation: 'An added line reimplements a helper, constant, or logic that already exists in the shown code or context instead of reusing it.',
-    clean: 'Added lines reuse what the shown code already provides.'
+    ask: "Does an added line reimplement something the shown code already provides?",
+    violation:
+      "Yes: an added line re-implements a helper, constant, parser, formatter, or query that already exists in the shown files or context, instead of calling it.",
+    clean: "No: added lines call what the shown code already provides, or nothing shown does the same job."
   },
   {
     name: 'unrelated_change',
     needsTask: true,
     locate: true,
-    violation: 'The diff changes lines unrelated to the task: a drive-by refactor, rename, reformat, or edit to code the task does not touch.',
-    clean: 'Every changed line traces to the task.'
+    ask: "Does the diff change existing code that the task does not need changed?",
+    violation:
+      "Yes: it renames, reformats, reorders, or rewrites existing lines that the requested behavior does not depend on.",
+    clean: "No: every changed existing line is needed for the requested behavior; new files, tests, and docs for the requested behavior count as needed."
   }
 ];
 
@@ -107,6 +118,54 @@ export function tagDiff(diff) {
   return { text: out.join('\n'), lines };
 }
 
+const MAX_SIBLING_FILES = 5;
+const MAX_SIBLING_CHARS = 40_000;
+
+export function siblingFiles(root, changedPaths) {
+  const excluded = new Set(changedPaths.map((p) => path.resolve(root, p)));
+  const result = [];
+  let totalChars = 0;
+
+  for (const changedPath of changedPaths) {
+    if (result.length >= MAX_SIBLING_FILES) return result;
+    const abs = path.resolve(root, changedPath);
+    const ext = path.extname(changedPath);
+    const dir = path.dirname(abs);
+    const relDir = path.relative(root, dir);
+    if (relDir.startsWith('..') || path.isAbsolute(relDir)) continue;
+    let entries;
+    try {
+      entries = readdirSync(dir).sort();
+    } catch {
+      continue;
+    }
+    for (const name of entries) {
+      if (result.length >= MAX_SIBLING_FILES) return result;
+      if (path.extname(name) !== ext) continue;
+      const candidate = path.join(dir, name);
+      if (excluded.has(candidate)) continue;
+      let stat;
+      try {
+        stat = statSync(candidate);
+      } catch {
+        continue;
+      }
+      if (!stat.isFile()) continue;
+      let text;
+      try {
+        text = readFileSync(candidate, 'utf8');
+      } catch {
+        continue;
+      }
+      if (totalChars + text.length > MAX_SIBLING_CHARS) continue;
+      excluded.add(candidate);
+      result.push({ path: path.relative(root, candidate), content: text });
+      totalChars += text.length;
+    }
+  }
+  return result;
+}
+
 function findGitRoot(cwd) {
   let dir = path.resolve(cwd);
   for (;;) {
@@ -149,7 +208,7 @@ export function buildQuestions(rules, lineIds) {
   for (const rule of rules) {
     questions[rule.name] = {
       type: 'noul',
-      instructions: 'Is this true of the change?',
+      instructions: rule.ask ?? 'Is this true of the change?',
       criteria: { true: rule.violation, false: rule.clean }
     };
     if (rule.locate && lineIds.length > 0) {
@@ -309,7 +368,7 @@ export function findings(results, rules, tagged) {
     const entry = byName.get(rule.name);
     return {
       name: rule.name,
-      violation: rule.violation,
+      violation: rule.violation.replace(/^Yes: /, ''),
       probability: entry.probability,
       where: entry.where,
       lineConfidence: entry.lineConfidence,
@@ -346,21 +405,6 @@ export function readApiKey() {
     if (match) value = unquote(match[1]);
   }
   return value || null;
-}
-
-export function extractPatchText(fields) {
-  if (typeof fields?.input === 'string') return fields.input;
-  if (typeof fields?.patch === 'string') return fields.patch;
-  if (typeof fields?.patchText === 'string') return fields.patchText;
-  return '';
-}
-
-export function filesFromPatchText(patchText) {
-  const files = [];
-  const pattern = /^\*\*\* (?:Add|Update) File: (.+)$/gm;
-  let match;
-  while ((match = pattern.exec(patchText))) files.push(match[1].trim());
-  return files;
 }
 
 function withTimeout(promise, ms) {
@@ -411,21 +455,84 @@ async function gitDiffForFiles(cwd, files) {
   return diff;
 }
 
-export async function lintAfterEdit({ cwd, files, apiKey, fetchImpl = fetch }) {
+export async function changedFiles(cwd) {
   try {
-    return await withTimeout(runLintAfterEdit({ cwd, files, apiKey, fetchImpl }), 10_000);
+    const [tracked, untracked] = await Promise.all([
+      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '--relative', 'HEAD']),
+      execFileAsync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'])
+    ]);
+    const files = new Set();
+    for (const line of tracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    for (const line of untracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    return [...files];
+  } catch {
+    return [];
+  }
+}
+
+function stateFilePath(cwd, sessionId) {
+  const key = createHash('sha1').update(`${cwd}\0${sessionId ?? ''}`).digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), `jev-edit-${key}.json`);
+}
+
+function readState(statePath) {
+  try {
+    return JSON.parse(readFileSync(statePath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function hashFile(cwd, file) {
+  try {
+    return createHash('sha1').update(readFileSync(path.join(cwd, file))).digest('hex');
   } catch {
     return '';
   }
 }
 
-async function runLintAfterEdit({ cwd, files, apiKey, fetchImpl }) {
+export async function filesToLint({ cwd, sessionId }) {
+  const changed = await changedFiles(cwd);
+  const statePath = stateFilePath(cwd, sessionId);
+  const state = readState(statePath);
+  const toLint = [];
+  const nextState = { ...state };
+  for (const file of changed) {
+    const hash = hashFile(cwd, file);
+    if (!(file in state) || state[file] !== hash) toLint.push(file);
+    nextState[file] = hash;
+  }
+  try {
+    writeFileSync(statePath, JSON.stringify(nextState));
+  } catch {
+    // ignore: the next call falls back to an empty state
+  }
+  return toLint;
+}
+
+export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch }) {
+  try {
+    return await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+  } catch {
+    return '';
+  }
+}
+
+async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
+  const files = await filesToLint({ cwd, sessionId });
+  if (files.length === 0) return '';
+
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
 
   const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
   const tagged = tagDiff(diff);
-  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
+  const state = { task: '' };
+  try {
+    const extraFiles = siblingFiles(cwd, files);
+    if (extraFiles.length > 0) state.files = extraFiles;
+  } catch {}
+  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
   const fixFindings = findings(results, rules, tagged).filter((f) => f.tier === 'fix');
   if (fixFindings.length === 0) return '';
 

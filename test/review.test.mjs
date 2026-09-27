@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,10 +12,15 @@ import {
   findings,
   formatWhere,
   readApiKey,
+  changedFiles,
+  filesToLint,
+  lintAfterEdit,
+  siblingFiles,
   RULES,
   MAX_CHOICES,
   LINE_CONFIDENCE
 } from '../review.mjs';
+import { makeRepo } from './git-repo-fixture.mjs';
 
 const TWO_FILE_DIFF = `diff --git a/a.js b/a.js
 index 111..222 100644
@@ -54,6 +60,22 @@ test('buildQuestions emits one noul per rule and one choice per locating rule', 
       assert.equal(questions[`${rule.name}_line`], undefined);
     }
   }
+});
+
+test('each built-in rule asks its own question', () => {
+  const questions = buildQuestions(RULES, ['L0001']);
+  for (const rule of RULES) {
+    assert.equal(typeof rule.ask, 'string');
+    assert.equal(questions[rule.name].instructions, rule.ask);
+  }
+});
+
+test('finding text drops the answer prefix of the rule criterion', () => {
+  const rules = [RULES[0]];
+  const response = { answers: { defect: { noul: 0.9 } } };
+  const [finding] = findings([{ response, rules }], rules, { lines: new Map() });
+  assert.doesNotMatch(finding.violation, /^Yes:/);
+  assert.match(finding.violation, /^for some input/);
 });
 
 test('loadRepoRules reads .jev/rules.json from a temp git root found from a subdirectory', () => {
@@ -213,7 +235,7 @@ test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFi
   }
 });
 
-test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {
+test('tier boundaries: 0.75 fix, 0.74 verify, 0.55 verify, 0.54 none', () => {
   const tagged = { lines: new Map() };
   const rules = [RULES[1]]; // missing_requirement: needsTask true, locate false
   const caseFor = (probability) => {
@@ -221,8 +243,193 @@ test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {
     const [f] = findings([{ response, rules }], rules, tagged);
     return f.tier;
   };
-  assert.equal(caseFor(0.8), 'fix');
-  assert.equal(caseFor(0.79), 'verify');
+  assert.equal(caseFor(0.75), 'fix');
+  assert.equal(caseFor(0.74), 'verify');
   assert.equal(caseFor(0.55), 'verify');
   assert.equal(caseFor(0.54), 'none');
+});
+
+test('changedFiles returns modified tracked and new untracked files, [] outside a git repo', async () => {
+  const dir = makeRepo('jev-changed-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 1;\n');
+    const files = await changedFiles(dir);
+    assert.deepEqual(new Set(files), new Set(['a.js', 'b.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const outside = mkdtempSync(path.join(tmpdir(), 'jev-notgit-'));
+  try {
+    assert.deepEqual(await changedFiles(outside), []);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('changedFiles returns paths relative to cwd, for both a modified tracked file and a new untracked file, when cwd is a subdirectory of the repo', async () => {
+  const dir = makeRepo('jev-subdir-');
+  try {
+    mkdirSync(path.join(dir, 'src'));
+    writeFileSync(path.join(dir, 'src', 'tracked.js'), 'const t = 1;\n');
+    execFileSync('git', ['-C', dir, 'add', 'src/tracked.js']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add tracked.js']);
+    writeFileSync(path.join(dir, 'src', 'tracked.js'), 'const t = 2;\n');
+    writeFileSync(path.join(dir, 'src', 'untracked.js'), 'const u = 1;\n');
+
+    const files = await changedFiles(path.join(dir, 'src'));
+    assert.deepEqual(new Set(files), new Set(['tracked.js', 'untracked.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('filesToLint returns changed files once, then only re-edited files, per session', async () => {
+  const dir = makeRepo('jev-tolint-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 1;\n');
+
+    const first = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(new Set(first), new Set(['a.js', 'b.js']));
+
+    const second = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(second, []);
+
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 3;\n');
+    const third = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(third, ['a.js']);
+
+    const otherSession = await filesToLint({ cwd: dir, sessionId: 's2' });
+    assert.deepEqual(new Set(otherSession), new Set(['a.js', 'b.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles sends siblings with the same extension as the changed file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-'));
+  try {
+    mkdirSync(path.join(root, 'scripts'));
+    writeFileSync(path.join(root, 'scripts', 'common.py'), 'def parse(): pass\n');
+    writeFileSync(path.join(root, 'scripts', 'frequency.py'), 'ROOT = 1\n');
+    const files = siblingFiles(root, ['scripts/frequency.py']);
+    assert.deepEqual(files, [{ path: path.join('scripts', 'common.py'), content: 'def parse(): pass\n' }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles skips other extensions and the changed file itself', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-ext-'));
+  try {
+    writeFileSync(path.join(root, 'a.py'), 'X = 1\n');
+    writeFileSync(path.join(root, 'a.md'), '# notes\n');
+    const files = siblingFiles(root, ['a.py']);
+    assert.deepEqual(files, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles ignores a changed path whose directory resolves outside root', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-escape-'));
+  try {
+    writeFileSync(path.join(root, 'sibling.py'), 'X = 1\n');
+    const files = siblingFiles(root, ['../outside.py']);
+    assert.deepEqual(files, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles returns [] for a changed path whose directory does not exist', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-missing-'));
+  try {
+    assert.deepEqual(siblingFiles(root, ['missing-dir/gone.py']), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles stops after 5 files', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-files-'));
+  try {
+    for (let i = 0; i < 7; i++) {
+      writeFileSync(path.join(root, `mod${i}.py`), `X${i} = ${i}\n`);
+    }
+    writeFileSync(path.join(root, 'main.py'), 'X = 1\n');
+    const files = siblingFiles(root, ['main.py']);
+    assert.equal(files.length, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('siblingFiles skips a file that would exceed the 40,000-character cap', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-chars-'));
+  try {
+    const big = 'x'.repeat(15000);
+    writeFileSync(path.join(root, 'mod0.py'), `A = "${big}"\n`);
+    writeFileSync(path.join(root, 'mod1.py'), `B = "${big}"\n`);
+    writeFileSync(path.join(root, 'mod2.py'), `C = "${big}"\n`);
+    writeFileSync(path.join(root, 'mod3.py'), `D = "${big}"\n`);
+    writeFileSync(path.join(root, 'main.py'), 'X = 1\n');
+    const files = siblingFiles(root, ['main.py']);
+    assert.ok(files.length < 4);
+    const total = files.reduce((sum, f) => sum + f.content.length, 0);
+    assert.ok(total <= 40000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('lintAfterEdit merges siblings of the linted files into state.files', async () => {
+  const dir = makeRepo('jev-lint-siblings-');
+  try {
+    writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
+    execFileSync('git', ['-C', dir, 'add', 'common.js']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add common']);
+    writeFileSync(path.join(dir, 'main.js'), 'export const known = 1;\n');
+
+    let sentFiles = null;
+    const fetchImpl = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      sentFiles = body.state.files;
+      const answers = {};
+      for (const [key, q] of Object.entries(body.questions)) {
+        if (q.type === 'noul') answers[key] = { noul: 0.1 };
+        if (q.type === 'choice') {
+          const ids = Object.keys(q.criteria);
+          answers[key] = { choice: ids[0], probabilities: { [ids[0]]: 0.9 } };
+        }
+      }
+      return { ok: true, json: async () => ({ answers }) };
+    };
+
+    await lintAfterEdit({ cwd: dir, sessionId: 'sY', apiKey: 'k', fetchImpl });
+    assert.deepEqual(
+      new Set(sentFiles.map((f) => f.path)),
+      new Set(['a.js', 'common.js'])
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("lintAfterEdit returns '' and makes no fetch call when nothing changed", async () => {
+  const dir = makeRepo('jev-nolint-');
+  try {
+    let called = false;
+    const fetchImpl = async () => {
+      called = true;
+      return { ok: true, json: async () => ({ answers: {} }) };
+    };
+    const result = await lintAfterEdit({ cwd: dir, sessionId: 'sX', apiKey: 'k', fetchImpl });
+    assert.equal(result, '');
+    assert.equal(called, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
