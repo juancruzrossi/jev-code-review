@@ -6,7 +6,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -109,7 +109,7 @@ export function tagDiff(diff) {
   return { text: out.join('\n'), lines };
 }
 
-function findGitRoot(cwd) {
+export function findGitRoot(cwd) {
   let dir = path.resolve(cwd);
   for (;;) {
     if (existsSync(path.join(dir, '.git'))) return dir;
@@ -146,6 +146,50 @@ export const PROJECT_RULES_RULE = {
   violation: "Yes: an added line breaks a rule stated in the project's AGENTS.md or CLAUDE.md.",
   clean: 'No: no added line breaks a rule stated in `project_rules`, or those files state no rule about this code.'
 };
+
+const AGENTS_FILE_PATTERN = /^AGENTS.*\.md$/;
+
+export function instructionFiles(root, changedPaths) {
+  const resolvedRoot = path.resolve(root);
+  const seen = new Map();
+
+  for (const changedPath of changedPaths) {
+    let dir = path.resolve(resolvedRoot, path.dirname(changedPath));
+    if (dir !== resolvedRoot && !dir.startsWith(resolvedRoot + path.sep)) continue;
+
+    for (;;) {
+      for (const file of listAgentsFiles(resolvedRoot, dir)) {
+        if (!seen.has(file.path)) seen.set(file.path, file);
+      }
+      if (dir === resolvedRoot) break;
+      dir = path.dirname(dir);
+    }
+  }
+
+  return [...seen.values()];
+}
+
+function listAgentsFiles(root, dir) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!AGENTS_FILE_PATTERN.test(entry.name) || !entry.isFile()) continue;
+    const absolute = path.join(dir, entry.name);
+    let content;
+    try {
+      content = readFileSync(absolute, 'utf8');
+    } catch {
+      continue;
+    }
+    files.push({ path: path.relative(root, absolute), dir: path.relative(root, dir), content });
+  }
+  return files;
+}
 
 export function loadRepoRules(cwd) {
   const root = findGitRoot(cwd);

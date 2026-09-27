@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -9,6 +9,7 @@ import {
   buildQuestions,
   loadRepoRules,
   loadProjectInstructions,
+  instructionFiles,
   askJev,
   findings,
   formatWhere,
@@ -159,6 +160,74 @@ test('loadProjectInstructions caps the joined text at 6000 characters', () => {
     writeFileSync(path.join(root, 'CLAUDE.md'), 'b'.repeat(4000));
     const text = loadProjectInstructions(root);
     assert.equal(text.length, 6000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function makeMonorepo() {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-monorepo-'));
+  mkdirSync(path.join(root, '.git'));
+  mkdirSync(path.join(root, 'packages', 'api'), { recursive: true });
+  mkdirSync(path.join(root, 'packages', 'web'), { recursive: true });
+  writeFileSync(path.join(root, 'AGENTS.md'), 'Root rule.');
+  writeFileSync(path.join(root, 'CLAUDE.md'), 'Never read this.');
+  writeFileSync(path.join(root, 'packages', 'api', 'AGENTS.md'), 'API rule.');
+  writeFileSync(path.join(root, 'packages', 'api', 'AGENTS.local.md'), 'API local rule.');
+  writeFileSync(path.join(root, 'packages', 'web', 'AGENTS.md'), 'Web rule.');
+  return root;
+}
+
+test('instructionFiles returns root and api AGENTS*.md for a change under packages/api, never web or CLAUDE.md', () => {
+  const root = makeMonorepo();
+  try {
+    const files = instructionFiles(root, ['packages/api/x.ts']);
+    const paths = files.map((f) => f.path).sort();
+    assert.deepEqual(paths, ['AGENTS.md', 'packages/api/AGENTS.local.md', 'packages/api/AGENTS.md'].sort());
+    assert.ok(!paths.includes('packages/web/AGENTS.md'));
+    assert.ok(!paths.some((p) => p.includes('CLAUDE.md')));
+    const apiFile = files.find((f) => f.path === 'packages/api/AGENTS.md');
+    assert.equal(apiFile.dir, 'packages/api');
+    assert.equal(apiFile.content, 'API rule.');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('instructionFiles returns only the root file for a change at the root', () => {
+  const root = makeMonorepo();
+  try {
+    const files = instructionFiles(root, ['x.ts']);
+    assert.deepEqual(files.map((f) => f.path), ['AGENTS.md']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('instructionFiles returns [] for no changed paths', () => {
+  const root = makeMonorepo();
+  try {
+    assert.deepEqual(instructionFiles(root, []), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('instructionFiles does not follow a symlinked AGENTS.md or a path escaping root', () => {
+  const root = makeMonorepo();
+  try {
+    const outside = mkdtempSync(path.join(tmpdir(), 'jev-outside-'));
+    try {
+      writeFileSync(path.join(outside, 'secret.md'), 'Outside rule.');
+      symlinkSync(path.join(outside, 'secret.md'), path.join(root, 'packages', 'api', 'AGENTS.link.md'));
+      const files = instructionFiles(root, ['packages/api/x.ts']);
+      assert.ok(!files.some((f) => f.content === 'Outside rule.'));
+
+      const escaping = instructionFiles(root, ['../outside/evil.ts']);
+      assert.deepEqual(escaping, []);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
