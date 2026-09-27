@@ -399,7 +399,7 @@ async function gitDiffForFiles(cwd, files) {
   }
   for (const file of untracked) {
     try {
-      const { stdout } = await execFileAsync('git', ['-C', cwd, 'diff', '--no-index', '/dev/null', file], {
+      const { stdout } = await execFileAsync('git', ['-C', cwd, 'diff', '--no-index', '/dev/null', path.relative(cwd, path.resolve(cwd, file))], {
         maxBuffer: 10 * 1024 * 1024
       });
       diff += stdout;

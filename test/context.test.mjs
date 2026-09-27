@@ -42,6 +42,21 @@ function runHook(payload, extraEnv = {}) {
   });
 }
 
+test('a new untracked file edited by absolute path reports a repo-relative path', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Write', tool_input: { file_path: path.join(dir, 'b.js') } },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /^- b\.js:1 — defect 90%/m);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a PostToolUse Edit payload with a Fix-tier defect reports the right path:line', async () => {
   const dir = makeRepo('jev-hook-repo-');
   try {
