@@ -1,7 +1,7 @@
 {
   "name": "jev-code-review",
   "version": "0.1.0",
-  "description": "Jev code review: a staff-engineer-level model that scores every code change and drives an autonomous fix-review loop.",
+  "description": "Jev code review for coding agents: checks each change against your request and your project's rules, and points to the exact line.",
   "type": "module",
   "main": "./.opencode/plugins/jev-code-review.mjs",
   "license": "MIT",

@@ -15,20 +15,38 @@ const execFileAsync = promisify(execFile);
 
 export const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_MODEL = 'jev-latest';
-export const FIX_TIER = 0.75;
-export const VERIFY_TIER = 0.55;
+export const BLOCK_TIER = 0.9;
+export const ADVISE_TIER = 0.55;
 export const MAX_CHOICES = 255;
 export const LINE_CONFIDENCE = 0.4;
 
 export const RULES = [
   {
-    name: 'defect',
-    needsTask: false,
-    locate: true,
-    ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",
+    name: 'addresses_task',
+    needsTask: true,
+    locate: false,
+    ask: "Does the change fail to do what the task asks?",
     violation:
-      "Yes: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.",
-    clean: "No: every added line behaves correctly for every input it can receive; style, performance and hypothetical misuse do not count."
+      "Yes: the change does not accomplish what the task asks, does it only partly, or breaks a constraint the task states.",
+    clean: "No: the change does what the task asks and respects its stated constraints."
+  },
+  {
+    name: 'unrelated_change',
+    needsTask: true,
+    locate: true,
+    ask: "Does the diff change existing code that the task does not need changed?",
+    violation:
+      "Yes: it renames, reformats, reorders, or rewrites existing lines that the requested behavior does not depend on.",
+    clean: "No: every changed existing line is needed for the requested behavior; new files, tests, and docs for the requested behavior count as needed."
+  },
+  {
+    name: 'needs_clarification',
+    needsTask: true,
+    locate: false,
+    ask: "Did the task leave out information this change needed?",
+    violation:
+      "Yes: the task is missing information needed to make this change soundly, so the diff had to guess a requirement, a behavior, or a value.",
+    clean: "No: the task gives enough information for this change."
   },
   {
     name: 'missing_requirement',
@@ -40,40 +58,13 @@ export const RULES = [
     clean: "No: everything the task names explicitly is implemented in the diff."
   },
   {
-    name: 'speculative_code',
-    needsTask: true,
-    locate: true,
-    ask: "Does the diff add behavior the task did not ask for?",
-    violation:
-      "Yes: it adds an option, flag, parameter, environment or config setting, cache, retry, fallback, or validation of data this program itself produced, which the task never mentions and no shown code needs.",
-    clean: "No: every added behavior is asked for by the task or required by shown code; tests and docs for the requested behavior count as asked for."
-  },
-  {
-    name: 'new_dependency',
+    name: 'defect',
     needsTask: false,
     locate: true,
-    ask: "Does the diff add a third-party dependency the task did not ask for?",
+    ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",
     violation:
-      "Yes: a manifest or lockfile (package.json, requirements.txt, pyproject.toml, go.mod, Cargo.toml) gains a third-party package, library, or test framework that the task never mentions.",
-    clean: "No: no third-party package is added, or the task asked for it."
-  },
-  {
-    name: 'reinvents_existing',
-    needsTask: false,
-    locate: true,
-    ask: "Does an added line reimplement something the shown code already provides?",
-    violation:
-      "Yes: an added line re-implements a helper, constant, parser, formatter, or query that already exists in the shown files or context, instead of calling it.",
-    clean: "No: added lines call what the shown code already provides, or nothing shown does the same job."
-  },
-  {
-    name: 'unrelated_change',
-    needsTask: true,
-    locate: true,
-    ask: "Does the diff change existing code that the task does not need changed?",
-    violation:
-      "Yes: it renames, reformats, reorders, or rewrites existing lines that the requested behavior does not depend on.",
-    clean: "No: every changed existing line is needed for the requested behavior; new files, tests, and docs for the requested behavior count as needed."
+      "Yes: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.",
+    clean: "No: every added line behaves correctly for every input it can receive; style, performance and hypothetical misuse do not count."
   }
 ];
 
@@ -127,6 +118,34 @@ function findGitRoot(cwd) {
     dir = parent;
   }
 }
+
+const PROJECT_INSTRUCTIONS_CAP = 6000;
+
+export function loadProjectInstructions(cwd) {
+  const root = findGitRoot(cwd);
+  if (!root) return null;
+  const parts = [];
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+    let content;
+    try {
+      content = readFileSync(path.join(root, name), 'utf8');
+    } catch {
+      continue;
+    }
+    parts.push(`# ${name}\n${content}`);
+  }
+  if (parts.length === 0) return null;
+  return parts.join('\n\n').slice(0, PROJECT_INSTRUCTIONS_CAP);
+}
+
+export const PROJECT_RULES_RULE = {
+  name: 'project_rules',
+  needsTask: false,
+  locate: true,
+  ask: 'Does an added line break a rule written in `project_rules`?',
+  violation: "Yes: an added line breaks a rule stated in the project's AGENTS.md or CLAUDE.md.",
+  clean: 'No: no added line breaks a rule stated in `project_rules`, or those files state no rule about this code.'
+};
 
 export function loadRepoRules(cwd) {
   const root = findGitRoot(cwd);
@@ -286,8 +305,8 @@ export async function callJev(apiKey, state, questions, fetchImpl = fetch) {
 }
 
 function tierFor(probability) {
-  if (probability >= FIX_TIER) return 'fix';
-  if (probability >= VERIFY_TIER) return 'verify';
+  if (probability >= BLOCK_TIER) return 'block';
+  if (probability >= ADVISE_TIER) return 'advise';
   return 'none';
 }
 
@@ -477,14 +496,18 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
 
+  const projectInstructions = loadProjectInstructions(cwd);
   const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
+  if (projectInstructions) rules.push(PROJECT_RULES_RULE);
   const tagged = tagDiff(diff);
-  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
-  const fixFindings = findings(results, rules, tagged).filter((f) => f.tier === 'fix');
-  if (fixFindings.length === 0) return '';
+  const state = { task: '' };
+  if (projectInstructions) state.project_rules = projectInstructions;
+  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
+  const blockFindings = findings(results, rules, tagged).filter((f) => f.tier === 'block');
+  if (blockFindings.length === 0) return '';
 
   const lines = ['Jev after edit:'];
-  for (const f of fixFindings) {
+  for (const f of blockFindings) {
     lines.push(`- ${formatWhere(f)}${f.name} ${Math.round(f.probability * 100)}%: ${f.violation}`);
   }
   lines.push('Check these lines now.');

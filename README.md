@@ -8,22 +8,21 @@ Works with Claude Code, Codex, and OpenCode.
 
 1. The agent changes code. After each edit, Jev checks the new lines and speaks only when it is confident a line is wrong.
 2. Before answering, the agent asks Jev to review the whole change against your request.
-3. Jev answers with findings: the file and line, the rule it breaks, and how sure it is. Fix findings (75% or more) get fixed; Verify findings (55-74%) get checked and changed only if the problem is real.
+3. Jev answers with findings: the file and line, the rule it breaks, and how sure it is. Findings at 90% or more must be resolved or explained; findings at 55-89% get checked and changed only if the problem is real.
 4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌─────────────────────┬───────┐
-│        Rule         │ Final │
-├─────────────────────┼───────┤
-│ defect              │ 92% ✗ │
-│ missing_requirement │ 15% ✓ │
-│ speculative_code    │ 16% ✓ │
-│ new_dependency      │ 5% ✓  │
-│ reinvents_existing  │ 15% ✓ │
-│ unrelated_change    │ 16% ✓ │
-└─────────────────────┴───────┘
+┌──────────────────────┬───────┐
+│         Rule         │ Final │
+├──────────────────────┼───────┤
+│ addresses_task       │ 8% ✓  │
+│ unrelated_change     │ 16% ✓ │
+│ needs_clarification  │ 5% ✓  │
+│ missing_requirement  │ 15% ✓ │
+│ defect               │ 92% ✗ │
+└──────────────────────┴───────┘
 
-Fix:
+Must resolve:
 - math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, ...
 ```
 
@@ -35,16 +34,18 @@ Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule cat
 
 | Rule | Checks |
 |---|---|
-| defect | An added line misbehaves for some real input |
-| missing_requirement | Something the task asked for is missing |
-| speculative_code | An added line does more than the task needs |
-| new_dependency | A new third-party dependency was added unasked |
-| reinvents_existing | An added line reimplements something that already exists |
+| addresses_task | The change fails to do what the task asks, or breaks a stated constraint |
 | unrelated_change | A changed line does not trace to the task |
+| needs_clarification | The task left out information this change needed |
+| missing_requirement | Something the task asked for is missing |
+| defect | An added line misbehaves for some real input |
 
 ### Project rules
 
-Add project-specific rules in `.jev/rules.json` at the git root:
+Jev also checks a change against your project's own conventions:
+
+- If the git root has an `AGENTS.md` or `CLAUDE.md`, its text (capped at 6,000 characters) is checked as a `project_rules` rule. Nothing needs to be added there for this — it reads what already exists.
+- For rules that don't belong in `AGENTS.md`/`CLAUDE.md`, add `.jev/rules.json` at the git root:
 
 ```json
 [{ "name": "no_console_log", "rule": "never call console.log in production code" }]

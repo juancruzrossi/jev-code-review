@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "jev-code-review",
-  "description": "Jev code review for coding agents: score every change and loop until it passes.",
+  "description": "Jev code review for coding agents: checks each change against your request and your project's rules, and points to the exact line.",
   "owner": {
     "name": "Juan Cruz Rossi",
     "url": "https://github.com/juancruzrossi"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "jev-code-review",
-      "description": "Autonomous Jev code-review loop via an MCP tool and session hooks.",
+      "description": "Line-level Jev review of each change via an MCP tool and session hooks.",
       "source": "./",
       "category": "productivity"
     }

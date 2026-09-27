@@ -22,18 +22,17 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ## What a finding looks like
 
 ```
-┌─────────────────────┬───────┐
-│        Rule         │ Final │
-├─────────────────────┼───────┤
-│ defect              │ 92% ✗ │
-│ missing_requirement │ 15% ✓ │
-│ speculative_code    │ 16% ✓ │
-│ new_dependency      │ 5% ✓  │
-│ reinvents_existing  │ 15% ✓ │
-│ unrelated_change    │ 16% ✓ │
-└─────────────────────┴───────┘
+┌──────────────────────┬───────┐
+│         Rule         │ Final │
+├──────────────────────┼───────┤
+│ addresses_task       │ 8% ✓  │
+│ unrelated_change     │ 16% ✓ │
+│ needs_clarification  │ 5% ✓  │
+│ missing_requirement  │ 15% ✓ │
+│ defect               │ 92% ✗ │
+└──────────────────────┴───────┘
 
-Fix:
+Must resolve:
 - math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
 ```
 
@@ -41,8 +40,8 @@ Findings come in two tiers:
 
 | Tier | Probability | What the agent does |
 |---|---|---|
-| Fix | 75% or more | Fixes the line. |
-| Verify | 55% to 74% | Opens the line and changes it only if the problem is real. |
+| Must resolve | 90% or more | Fixes the line, or explains in its answer why it is not a real problem. |
+| Check | 55% to 89% | Opens the line and changes it only if the problem is real. |
 
 When Jev is unsure about the exact line, the finding says `(line uncertain)`. The agent ends its answer with the table, so you see the result too.
 
@@ -50,12 +49,11 @@ When Jev is unsure about the exact line, the finding says `(line uncertain)`. Th
 
 | Rule | Catches |
 |---|---|
-| `defect` | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
-| `missing_requirement` | Something your request explicitly asked for that is not in the change. |
-| `speculative_code` | Options, settings, caches, retries, or checks that nobody asked for. |
-| `new_dependency` | A new third-party package that your request did not ask for. |
-| `reinvents_existing` | New code that duplicates a helper or constant the project already has. |
+| `addresses_task` | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
 | `unrelated_change` | Renames, reformatting, or rewrites of code your request did not need changed. |
+| `needs_clarification` | Missing information in your request that made the agent guess a requirement, a behavior, or a value. |
+| `missing_requirement` | Something your request explicitly asked for that is not in the change. |
+| `defect` | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
 
 You can add rules for your own project, such as "money amounts are integers in cents, never floats". See [Project rules](../README.md#project-rules).
 
@@ -67,4 +65,4 @@ You can add rules for your own project, such as "money amounts are integers in c
 
 ## What leaves your machine
 
-To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, and any files the agent passes along for context. It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
+To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, any files the agent passes along for context, and — if the git root has one — the text of `AGENTS.md` or `CLAUDE.md` (capped at 6,000 characters). It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.

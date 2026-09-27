@@ -8,6 +8,7 @@ import {
   tagDiff,
   buildQuestions,
   loadRepoRules,
+  loadProjectInstructions,
   askJev,
   findings,
   formatWhere,
@@ -61,6 +62,10 @@ test('buildQuestions emits one noul per rule and one choice per locating rule', 
   }
 });
 
+test('RULES names are exactly the task-alignment set plus missing_requirement and defect', () => {
+  assert.deepEqual(RULES.map((r) => r.name), ['addresses_task', 'unrelated_change', 'needs_clarification', 'missing_requirement', 'defect']);
+});
+
 test('each built-in rule asks its own question', () => {
   const questions = buildQuestions(RULES, ['L0001']);
   for (const rule of RULES) {
@@ -70,7 +75,7 @@ test('each built-in rule asks its own question', () => {
 });
 
 test('finding text drops the answer prefix of the rule criterion', () => {
-  const rules = [RULES[0]];
+  const rules = [RULES.find((r) => r.name === 'defect')];
   const response = { answers: { defect: { noul: 0.9 } } };
   const [finding] = findings([{ response, rules }], rules, { lines: new Map() });
   assert.doesNotMatch(finding.violation, /^Yes:/);
@@ -120,6 +125,45 @@ test('loadRepoRules throws on invalid JSON', () => {
   }
 });
 
+test('loadProjectInstructions joins AGENTS.md and CLAUDE.md with a header line per file', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    writeFileSync(path.join(root, 'AGENTS.md'), 'Never call console.log.');
+    writeFileSync(path.join(root, 'CLAUDE.md'), 'Money amounts are integers in cents.');
+    const text = loadProjectInstructions(root);
+    assert.match(text, /# AGENTS\.md/);
+    assert.match(text, /Never call console\.log\./);
+    assert.match(text, /# CLAUDE\.md/);
+    assert.match(text, /Money amounts are integers in cents\./);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadProjectInstructions returns null when neither file exists', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    assert.equal(loadProjectInstructions(root), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('loadProjectInstructions caps the joined text at 6000 characters', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    writeFileSync(path.join(root, 'AGENTS.md'), 'a'.repeat(4000));
+    writeFileSync(path.join(root, 'CLAUDE.md'), 'b'.repeat(4000));
+    const text = loadProjectInstructions(root);
+    assert.equal(text.length, 6000);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function bigDiff(count) {
   const header = 'diff --git a/big.js b/big.js\nindex 111..222 100644\n--- a/big.js\n+++ b/big.js\n@@ -1,0 +1,' + count + ' @@\n';
   const body = Array.from({ length: count }, (_, i) => `+const v${i} = ${i};`).join('\n');
@@ -155,7 +199,7 @@ test('more than 255 added lines splits requests, each choice at most 255 options
 
   const found = findings(results, RULES, tagged);
   const defect = found.find((f) => f.name === 'defect');
-  assert.equal(defect.tier, 'fix');
+  assert.equal(defect.tier, 'block');
   assert.ok(defect.where);
 });
 
@@ -234,17 +278,17 @@ test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFi
   }
 });
 
-test('tier boundaries: 0.75 fix, 0.74 verify, 0.55 verify, 0.54 none', () => {
+test('tier boundaries: 0.90 block, 0.89 advise, 0.55 advise, 0.54 none', () => {
   const tagged = { lines: new Map() };
-  const rules = [RULES[1]]; // missing_requirement: needsTask true, locate false
+  const rules = [RULES.find((r) => r.name === 'missing_requirement')];
   const caseFor = (probability) => {
     const response = { answers: { missing_requirement: { noul: probability } } };
     const [f] = findings([{ response, rules }], rules, tagged);
     return f.tier;
   };
-  assert.equal(caseFor(0.75), 'fix');
-  assert.equal(caseFor(0.74), 'verify');
-  assert.equal(caseFor(0.55), 'verify');
+  assert.equal(caseFor(0.9), 'block');
+  assert.equal(caseFor(0.89), 'advise');
+  assert.equal(caseFor(0.55), 'advise');
   assert.equal(caseFor(0.54), 'none');
 });
 
