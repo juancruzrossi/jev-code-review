@@ -349,21 +349,6 @@ export function readApiKey() {
   return value || null;
 }
 
-export function extractPatchText(fields) {
-  if (typeof fields?.input === 'string') return fields.input;
-  if (typeof fields?.patch === 'string') return fields.patch;
-  if (typeof fields?.patchText === 'string') return fields.patchText;
-  return '';
-}
-
-export function filesFromPatchText(patchText) {
-  const files = [];
-  const pattern = /^\*\*\* (?:Add|Update) File: (.+)$/gm;
-  let match;
-  while ((match = pattern.exec(patchText))) files.push(match[1].trim());
-  return files;
-}
-
 function withTimeout(promise, ms) {
   let timer;
   const timeout = new Promise((_, reject) => {
