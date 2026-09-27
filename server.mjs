@@ -210,6 +210,7 @@ async function handle(message) {
 }
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
+let queue = Promise.resolve();
 rl.on('line', (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
@@ -220,5 +221,5 @@ rl.on('line', (line) => {
     process.stderr.write(`jev-code-review: invalid JSON-RPC line: ${trimmed}\n`);
     return;
   }
-  handle(message).catch((error) => process.stderr.write(`jev-code-review: ${error.message || error}\n`));
+  queue = queue.then(() => handle(message)).catch((error) => process.stderr.write(`jev-code-review: ${error.message || error}\n`));
 });

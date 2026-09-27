@@ -23,6 +23,8 @@ const __roundProbs = process.env.JEV_STUB_ROUND_PROBS ? JSON.parse(process.env.J
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
   process.stderr.write('TASK:' + JSON.stringify(body.state.task) + '\\n');
+  const delayMs = Number(process.env.JEV_STUB_DELAY_MS ?? 0);
+  if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   const round = __call;
   __call += 1;
   const scalarProb = Number(process.env.JEV_STUB_PROB ?? 0.05);
@@ -71,7 +73,6 @@ function runServer(requests, extraEnv = {}) {
       const req = requests[index];
       index += 1;
       const onData = (d) => {
-        stdout += ''; // already accumulated by the listener above
         if (new RegExp(`"id":${req.id}\\b`).test(d.toString())) {
           child.stdout.removeListener('data', onData);
           sendNext();
@@ -81,6 +82,24 @@ function runServer(requests, extraEnv = {}) {
       child.stdin.write(JSON.stringify(req) + '\n');
     };
     sendNext();
+  });
+}
+
+function runServerPipelined(requests, extraEnv = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
+      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv } }
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', reject);
+    child.on('close', () => resolve({ stdout, stderr }));
+    for (const req of requests) child.stdin.write(JSON.stringify(req) + '\n');
+    child.stdin.end();
   });
 }
 
@@ -197,6 +216,17 @@ test('three rounds hit max rounds, then the next call starts a new round 1', asy
   assert.match(text3, /Max rounds reached/);
   assert.match(text4, /PASSED — deliver\./);
   assert.doesNotMatch(text4, /Round \d/);
+});
+
+test('two pipelined calls sent before either response arrives still resolve as round 1 then round 2', async () => {
+  const { stdout } = await runServerPipelined(
+    [call(1, { task: 'A' }), call(2, { task: 'A' })],
+    { JEV_STUB_PROB: '0.85', JEV_STUB_DELAY_MS: '30' }
+  );
+  const text1 = extractResult(stdout, 1).content[0].text;
+  const text2 = extractResult(stdout, 2).content[0].text;
+  assert.doesNotMatch(text1, /│\s*Round 1\s*│\s*Final\s*│/);
+  assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
 });
 
 test('a call with a stray previous argument works', async () => {
