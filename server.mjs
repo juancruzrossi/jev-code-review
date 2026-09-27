@@ -8,7 +8,7 @@
 
 import readline from 'node:readline';
 import { MARKER_HINT, MARKER_TAG } from './context.mjs';
-import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, readApiKey } from './review.mjs';
+import { RULES, FIX_TIER, tagDiff, loadRepoRules, askJev, findings, formatWhere, readApiKey } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -51,8 +51,7 @@ function renderTable(ruleNames, rounds) {
 
 function findingLine(finding) {
   const percent = Math.round(finding.probability * 100);
-  const where = finding.where ? `${finding.where.path}:${finding.where.line} — ` : '';
-  return `- ${where}${finding.name} ${percent}%: ${finding.violation}`;
+  return `- ${formatWhere(finding)}${finding.name} ${percent}%: ${finding.violation}`;
 }
 
 function verdictLine(round, fixFindings, noProgress) {

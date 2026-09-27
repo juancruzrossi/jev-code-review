@@ -21,13 +21,14 @@ globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
   process.stderr.write('TASK:' + JSON.stringify(body.state.task) + '\\n');
   const prob = Number(process.env.JEV_STUB_PROB ?? 0.05);
+  const lineProb = Number(process.env.JEV_STUB_LINE_PROB ?? 0.9);
   const answers = {};
   for (const [key, q] of Object.entries(body.questions)) {
     if (q.type === 'noul') answers[key] = { noul: prob };
     if (q.type === 'choice') {
       const ids = Object.keys(q.criteria);
       const pick = ids[0];
-      answers[key] = { choice: pick, probabilities: { [pick]: 0.9 } };
+      answers[key] = { choice: pick, probabilities: { [pick]: lineProb } };
     }
   }
   return { ok: true, json: async () => ({ answers }) };
@@ -148,6 +149,12 @@ test('a Fix-tier finding is printed with its path:line and the verdict names rou
   assert.match(text, /^Fix:/m);
   assert.match(text, /- a\.js:2 — defect 85%:/);
   assert.match(text, /Round 1\/3/);
+});
+
+test('a Fix-tier finding with a low line confidence flags the location as uncertain', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.85', JEV_STUB_LINE_PROB: '0.3' });
+  const text = extractResult(stdout, 1).content[0].text;
+  assert.match(text, /- a\.js:2 \(line uncertain\) — defect 85%:/);
 });
 
 test('a Verify-tier finding prints the Verify section', async () => {

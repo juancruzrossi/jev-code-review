@@ -74,6 +74,33 @@ test('tool.execute.after leaves output untouched below the Fix tier', async () =
   }
 });
 
+test('tool.execute.after reads apply_patch files from args.patchText (OpenCode)', async () => {
+  const dir = makeRepo('jev-opencode-repo-');
+  const originalFetch = globalThis.fetch;
+  const originalCwd = process.cwd();
+  const originalKey = process.env.JEV_API_KEY;
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    globalThis.fetch = stubFetch(0.9);
+    process.env.JEV_API_KEY = 'test';
+    process.chdir(dir);
+
+    const patchText = `*** Begin Patch\n*** Update File: ${path.join(dir, 'a.js')}\n@@\n-const b = 2;\n+const b = 3;\n*** End Patch`;
+    const hooks = await plugin();
+    const output = { output: 'original output' };
+    await hooks['tool.execute.after']({ tool: 'apply_patch', args: { patchText } }, output);
+
+    assert.match(output.output, /Jev after edit:/);
+    assert.match(output.output, /a\.js:2 — defect 90%/);
+  } finally {
+    process.chdir(originalCwd);
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.JEV_API_KEY;
+    else process.env.JEV_API_KEY = originalKey;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('tool.execute.after ignores tools it does not cover', async () => {
   const hooks = await plugin();
   const output = { output: 'original output' };

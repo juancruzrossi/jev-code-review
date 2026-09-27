@@ -9,8 +9,10 @@ import {
   loadRepoRules,
   askJev,
   findings,
+  formatWhere,
   RULES,
-  MAX_CHOICES
+  MAX_CHOICES,
+  LINE_CONFIDENCE
 } from '../review.mjs';
 
 const TWO_FILE_DIFF = `diff --git a/a.js b/a.js
@@ -124,7 +126,7 @@ test('more than 255 added lines splits requests, each choice at most 255 options
   };
 
   const results = await askJev({ apiKey: 'k', state: { task: 't' }, rules: RULES, tagged, fetchImpl });
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 3);
   for (const call of calls) {
     if (call.defect_line) assert.ok(Object.keys(call.defect_line.criteria).length <= MAX_CHOICES);
   }
@@ -133,6 +135,56 @@ test('more than 255 added lines splits requests, each choice at most 255 options
   const defect = found.find((f) => f.name === 'defect');
   assert.equal(defect.tier, 'fix');
   assert.ok(defect.where);
+});
+
+function bigDiffFile(name, count, startId) {
+  const header = `diff --git a/${name} b/${name}\nindex 111..222 100644\n--- a/${name}\n+++ b/${name}\n@@ -1,0 +1,${count} @@\n`;
+  const body = Array.from({ length: count }, (_, i) => `+const v${startId + i} = ${startId + i};`).join('\n');
+  return header + body + '\n';
+}
+
+test('a split diff asks missing_requirement once, over the whole untagged diff', async () => {
+  const diff = bigDiffFile('one.js', 200, 0) + bigDiffFile('two.js', 200, 200);
+  const tagged = tagDiff(diff);
+  assert.equal(tagged.lines.size, 400);
+
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    calls.push(body);
+    const answers = {};
+    for (const [key, q] of Object.entries(body.questions)) {
+      if (q.type === 'noul') answers[key] = { noul: 0.5 };
+      if (q.type === 'choice') {
+        const ids = Object.keys(q.criteria);
+        answers[key] = { choice: ids[0], probabilities: { [ids[0]]: 0.9 } };
+      }
+    }
+    return { ok: true, json: async () => ({ answers }) };
+  };
+
+  await askJev({ apiKey: 'k', state: { task: 't' }, rules: RULES, tagged, fetchImpl });
+
+  const taskCalls = calls.filter((c) => c.questions.missing_requirement);
+  assert.equal(taskCalls.length, 1);
+  assert.equal(taskCalls[0].questions.missing_requirement_line, undefined);
+  assert.match(taskCalls[0].state.diff, /one\.js/);
+  assert.match(taskCalls[0].state.diff, /two\.js/);
+  assert.match(taskCalls[0].state.diff, /v0 = 0/);
+  assert.match(taskCalls[0].state.diff, /v399 = 399/);
+
+  const chunkCalls = calls.filter((c) => !c.questions.missing_requirement);
+  assert.equal(chunkCalls.length, 2);
+  for (const c of chunkCalls) assert.equal(c.questions.missing_requirement, undefined);
+});
+
+test('formatWhere flags a line confidence below LINE_CONFIDENCE as uncertain', () => {
+  const uncertain = { where: { path: 'a.js', line: 2 }, lineConfidence: LINE_CONFIDENCE - 0.01 };
+  const confident = { where: { path: 'a.js', line: 2 }, lineConfidence: LINE_CONFIDENCE };
+  const noLocation = { where: null, lineConfidence: null };
+  assert.equal(formatWhere(uncertain), 'a.js:2 (line uncertain) — ');
+  assert.equal(formatWhere(confident), 'a.js:2 — ');
+  assert.equal(formatWhere(noLocation), '');
 });
 
 test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {

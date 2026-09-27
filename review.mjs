@@ -17,6 +17,7 @@ export const JEV_MODEL = 'jev-latest';
 export const FIX_TIER = 0.8;
 export const VERIFY_TIER = 0.55;
 export const MAX_CHOICES = 255;
+export const LINE_CONFIDENCE = 0.4;
 
 export const RULES = [
   {
@@ -176,14 +177,28 @@ export async function askJev({ apiKey, state, rules, tagged, fetchImpl = fetch }
   const chunks = splitByFileAndSize(tagged);
   const results = [];
 
-  for (let i = 0; i < chunks.length; i += 1) {
-    const chunk = chunks[i];
-    const chunkRules = i === 0 ? rules : rules.filter((r) => r.locate);
-    const questions = buildQuestions(chunkRules, chunk.ids);
+  const locatingRules = rules.filter((r) => r.locate);
+  for (const chunk of chunks) {
+    const questions = buildQuestions(locatingRules, chunk.ids);
     const response = await callJev(apiKey, { ...state, diff: chunk.text }, questions, fetchImpl);
-    results.push({ response, questions, rules: chunkRules, lineIds: chunk.ids });
+    results.push({ response, questions, rules: locatingRules, lineIds: chunk.ids });
   }
+
+  const taskRules = rules.filter((r) => !r.locate);
+  if (taskRules.length > 0) {
+    const questions = buildQuestions(taskRules, []);
+    const response = await callJev(apiKey, { ...state, diff: untagDiffText(tagged.text) }, questions, fetchImpl);
+    results.push({ response, questions, rules: taskRules, lineIds: [] });
+  }
+
   return results;
+}
+
+function untagDiffText(text) {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^L\d{4}\|/, ''))
+    .join('\n');
 }
 
 function splitByFileAndSize(tagged) {
@@ -274,8 +289,8 @@ export function findings(results, rules, tagged) {
       const answer = response.answers?.[rule.name];
       if (!answer || typeof answer.noul !== 'number') continue;
       const entry = byName.get(rule.name);
-      if (answer.noul <= entry.probability && entry.where !== null) continue;
-      if (answer.noul < entry.probability) continue;
+      const isHigher = answer.noul > entry.probability || (answer.noul === entry.probability && entry.where === null);
+      if (!isHigher) continue;
 
       let where = null;
       let lineConfidence = null;
@@ -303,6 +318,12 @@ export function findings(results, rules, tagged) {
   });
 }
 
+export function formatWhere(finding) {
+  if (!finding.where) return '';
+  const uncertain = finding.lineConfidence !== null && finding.lineConfidence < LINE_CONFIDENCE ? ' (line uncertain)' : '';
+  return `${finding.where.path}:${finding.where.line}${uncertain} — `;
+}
+
 export function readApiKey() {
   if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
   try {
@@ -314,7 +335,10 @@ export function readApiKey() {
 }
 
 export function extractPatchText(fields) {
-  return typeof fields?.input === 'string' ? fields.input : typeof fields?.patch === 'string' ? fields.patch : '';
+  if (typeof fields?.input === 'string') return fields.input;
+  if (typeof fields?.patch === 'string') return fields.patch;
+  if (typeof fields?.patchText === 'string') return fields.patchText;
+  return '';
 }
 
 export function filesFromPatchText(patchText) {
@@ -393,8 +417,7 @@ async function runLintAfterEdit({ cwd, files, apiKey, fetchImpl }) {
 
   const lines = ['Jev after edit:'];
   for (const f of fixFindings) {
-    const where = f.where ? `${f.where.path}:${f.where.line} — ` : '';
-    lines.push(`- ${where}${f.name} ${Math.round(f.probability * 100)}%: ${f.violation}`);
+    lines.push(`- ${formatWhere(f)}${f.name} ${Math.round(f.probability * 100)}%: ${f.violation}`);
   }
   lines.push('Check these lines now.');
   return lines.join('\n');

@@ -12,13 +12,14 @@ const FETCH_STUB = `
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
   const prob = Number(process.env.JEV_STUB_PROB ?? 0.05);
+  const lineProb = Number(process.env.JEV_STUB_LINE_PROB ?? 0.9);
   const answers = {};
   for (const [key, q] of Object.entries(body.questions)) {
     if (q.type === 'noul') answers[key] = { noul: prob };
     if (q.type === 'choice') {
       const ids = Object.keys(q.criteria);
       const pick = ids[0];
-      answers[key] = { choice: pick, probabilities: { [pick]: 0.9 } };
+      answers[key] = { choice: pick, probabilities: { [pick]: lineProb } };
     }
   }
   return { ok: true, json: async () => ({ answers }) };
@@ -52,6 +53,21 @@ test('a PostToolUse Edit payload with a Fix-tier defect reports the right path:l
     const message = JSON.parse(stdout);
     assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
     assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a Fix-tier defect with a low line confidence flags the location as uncertain', async () => {
+  const dir = makeRepo('jev-hook-repo-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'a.js') } },
+      { JEV_STUB_PROB: '0.9', JEV_STUB_LINE_PROB: '0.3' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 \(line uncertain\) — defect 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
