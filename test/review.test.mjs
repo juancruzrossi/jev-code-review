@@ -10,6 +10,7 @@ import {
   askJev,
   findings,
   formatWhere,
+  readApiKey,
   RULES,
   MAX_CHOICES,
   LINE_CONFIDENCE
@@ -185,6 +186,31 @@ test('formatWhere flags a line confidence below LINE_CONFIDENCE as uncertain', (
   assert.equal(formatWhere(uncertain), 'a.js:2 (line uncertain) — ');
   assert.equal(formatWhere(confident), 'a.js:2 — ');
   assert.equal(formatWhere(noLocation), '');
+});
+
+test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFile', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'jev-home-'));
+  const originalHome = process.env.HOME;
+  const hadKey = Object.prototype.hasOwnProperty.call(process.env, 'JEV_API_KEY');
+  const originalKey = process.env.JEV_API_KEY;
+  const originalLoadEnvFile = process.loadEnvFile;
+  try {
+    delete process.env.JEV_API_KEY;
+    process.env.HOME = home;
+    delete process.loadEnvFile;
+
+    writeFileSync(path.join(home, '.env'), 'JEV_API_KEY="abc"\n');
+    assert.equal(readApiKey(), 'abc');
+
+    writeFileSync(path.join(home, '.env'), 'export JEV_API_KEY="abc"\n');
+    assert.equal(readApiKey(), 'abc');
+  } finally {
+    if (hadKey) process.env.JEV_API_KEY = originalKey;
+    else delete process.env.JEV_API_KEY;
+    process.env.HOME = originalHome;
+    if (originalLoadEnvFile) process.loadEnvFile = originalLoadEnvFile;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {

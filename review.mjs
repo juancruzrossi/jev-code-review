@@ -324,14 +324,28 @@ export function formatWhere(finding) {
   return `${finding.where.path}:${finding.where.line}${uncertain} — `;
 }
 
+const ENV_KEY_PATTERN = /^\s*(?:export\s+)?JEV_API_KEY\s*=\s*(.*)$/;
+
+function unquote(value) {
+  const trimmed = value.trim();
+  const match = /^(['"])(.*)\1$/.exec(trimmed);
+  return match ? match[2] : trimmed;
+}
+
 export function readApiKey() {
   if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
+  let content;
   try {
-    process.loadEnvFile(path.join(os.homedir(), '.env'));
+    content = readFileSync(path.join(os.homedir(), '.env'), 'utf8');
   } catch {
-    // no ~/.env or it couldn't be read — fall through to the missing-key error below
+    return null;
   }
-  return process.env.JEV_API_KEY || null;
+  let value = null;
+  for (const line of content.split('\n')) {
+    const match = ENV_KEY_PATTERN.exec(line);
+    if (match) value = unquote(match[1]);
+  }
+  return value || null;
 }
 
 export function extractPatchText(fields) {
