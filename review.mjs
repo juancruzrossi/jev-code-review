@@ -5,7 +5,8 @@
 // ("choice") question per rule, asks Jev, and reports findings in tiers.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -411,15 +412,73 @@ async function gitDiffForFiles(cwd, files) {
   return diff;
 }
 
-export async function lintAfterEdit({ cwd, files, apiKey, fetchImpl = fetch }) {
+export async function changedFiles(cwd) {
   try {
-    return await withTimeout(runLintAfterEdit({ cwd, files, apiKey, fetchImpl }), 10_000);
+    const [tracked, untracked] = await Promise.all([
+      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', 'HEAD']),
+      execFileAsync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'])
+    ]);
+    const files = new Set();
+    for (const line of tracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    for (const line of untracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    return [...files];
+  } catch {
+    return [];
+  }
+}
+
+function stateFilePath(cwd, sessionId) {
+  const key = createHash('sha1').update(`${cwd}\0${sessionId ?? ''}`).digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), `jev-edit-${key}.json`);
+}
+
+function readState(statePath) {
+  try {
+    return JSON.parse(readFileSync(statePath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function hashFile(cwd, file) {
+  try {
+    return createHash('sha1').update(readFileSync(path.join(cwd, file))).digest('hex');
   } catch {
     return '';
   }
 }
 
-async function runLintAfterEdit({ cwd, files, apiKey, fetchImpl }) {
+export async function filesToLint({ cwd, sessionId }) {
+  const changed = await changedFiles(cwd);
+  const statePath = stateFilePath(cwd, sessionId);
+  const state = readState(statePath);
+  const toLint = [];
+  const nextState = { ...state };
+  for (const file of changed) {
+    const hash = hashFile(cwd, file);
+    if (!(file in state) || state[file] !== hash) toLint.push(file);
+    nextState[file] = hash;
+  }
+  try {
+    writeFileSync(statePath, JSON.stringify(nextState));
+  } catch {
+    // ignore: the next call falls back to an empty state
+  }
+  return toLint;
+}
+
+export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch }) {
+  try {
+    return await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+  } catch {
+    return '';
+  }
+}
+
+async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
+  const files = await filesToLint({ cwd, sessionId });
+  if (files.length === 0) return '';
+
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
 

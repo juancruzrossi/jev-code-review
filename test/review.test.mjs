@@ -11,10 +11,14 @@ import {
   findings,
   formatWhere,
   readApiKey,
+  changedFiles,
+  filesToLint,
+  lintAfterEdit,
   RULES,
   MAX_CHOICES,
   LINE_CONFIDENCE
 } from '../review.mjs';
+import { makeRepo } from './git-repo-fixture.mjs';
 
 const TWO_FILE_DIFF = `diff --git a/a.js b/a.js
 index 111..222 100644
@@ -225,4 +229,62 @@ test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {
   assert.equal(caseFor(0.79), 'verify');
   assert.equal(caseFor(0.55), 'verify');
   assert.equal(caseFor(0.54), 'none');
+});
+
+test('changedFiles returns modified tracked and new untracked files, [] outside a git repo', async () => {
+  const dir = makeRepo('jev-changed-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 1;\n');
+    const files = await changedFiles(dir);
+    assert.deepEqual(new Set(files), new Set(['a.js', 'b.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  const outside = mkdtempSync(path.join(tmpdir(), 'jev-notgit-'));
+  try {
+    assert.deepEqual(await changedFiles(outside), []);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('filesToLint returns changed files once, then only re-edited files, per session', async () => {
+  const dir = makeRepo('jev-tolint-');
+  try {
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+    writeFileSync(path.join(dir, 'b.js'), 'const b = 1;\n');
+
+    const first = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(new Set(first), new Set(['a.js', 'b.js']));
+
+    const second = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(second, []);
+
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 3;\n');
+    const third = await filesToLint({ cwd: dir, sessionId: 's1' });
+    assert.deepEqual(third, ['a.js']);
+
+    const otherSession = await filesToLint({ cwd: dir, sessionId: 's2' });
+    assert.deepEqual(new Set(otherSession), new Set(['a.js', 'b.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("lintAfterEdit returns '' and makes no fetch call when nothing changed", async () => {
+  const dir = makeRepo('jev-nolint-');
+  try {
+    let called = false;
+    const fetchImpl = async () => {
+      called = true;
+      return { ok: true, json: async () => ({ answers: {} }) };
+    };
+    const result = await lintAfterEdit({ cwd: dir, sessionId: 'sX', apiKey: 'k', fetchImpl });
+    assert.equal(result, '');
+    assert.equal(called, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
