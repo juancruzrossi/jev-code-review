@@ -63,8 +63,8 @@ You can add rules for your own project, such as "money amounts are integers in c
 
 - It doesn't judge design or architecture. Whether a change is the right approach is still your call.
 - It doesn't replace tests. It catches likely problems in the new lines; tests prove behavior.
-- It doesn't see your whole repository. It sees the change, your request, and a few files next to the changed ones.
+- It doesn't see your whole repository. It sees the change, your request, and any files the agent passes along.
 
 ## What leaves your machine
 
-To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, and the content of up to five files in the same folders as the changed files. It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
+To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, and any files the agent passes along for context. It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
