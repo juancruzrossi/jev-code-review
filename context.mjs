@@ -19,12 +19,12 @@ Tool available: \`jev_review\` (task, diff, files?, context?, previous?). Its te
 
 Mandatory rules:
 - \`task\` is the user's request as given, the same in every round; \`diff\` is only the real diff of the change (e.g. \`git diff\`), no hand-written pseudo-diffs or changes outside it — describe those in \`context\` instead.
-- After changing code in a turn (not docs, prose, or pure formatting) and before answering, call \`jev_review\` with the task and the diff.
+- After changing a project's source code that the user asked to change (not docs, prose, pure formatting, config, or throwaway/scratch scripts) and before answering, call \`jev_review\` with the task and the diff.
 - If any dimension fails, ${FIX_RULE}. Then call \`jev_review\` again, passing the previous result's \`${MARKER_HINT}\` marker line unchanged as \`previous\`, until it reports PASSED, no real progress, or 3 rounds; if you find no concrete defect, deliver.
 - A subagent that edits code runs this loop itself before returning; a read-only subagent skips it.
 - End your answer by pasting the tool's box-drawing table verbatim in a code block (omit the \`${MARKER_TAG}\` marker line — that one is only for your next tool call, never for the user).`;
 
-export const REMINDER = 'Jev: if you change code this turn, run jev_review before answering and paste its final table.';
+export const REMINDER = "Jev: if you changed a project's source code this turn, run jev_review before answering and paste its final table.";
 
 function main() {
   try {
