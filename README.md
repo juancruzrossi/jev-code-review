@@ -7,37 +7,48 @@ Works with Claude Code, Codex, and OpenCode.
 ## How it works
 
 1. The agent changes code.
-2. Jev scores the change on six dimensions.
-3. If a dimension fails, the agent fixes the concrete defect and asks Jev again, up to 3 rounds; it stops early when scores stop improving.
-4. The agent ends its answer with the score table. `Final` is the last round:
+2. Jev asks a small yes/no rule for each concern and, when a rule is true, which added line breaks it.
+3. Findings land in two tiers: Fix (80% or more) must be fixed; Verify (55-79%) should be opened and changed only if the problem is real. The agent fixes Fix items and asks Jev again, up to 3 rounds; it stops early when the Fix count stops dropping.
+4. The agent ends its answer with the table. `Final` is the last round:
 
 ```
-┌─────────────────┬─────────┬───────┐
-│    Dimension    │ Round 1 │ Final │
-├─────────────────┼─────────┼───────┤
-│ Correctness     │ 7.4     │ 9.1 ✓ │
-│ Simplicity      │ 6.2     │ 8.8 ✓ │
-│ Surgical scope  │ 9.0     │ 9.2 ✓ │
-│ Conventions     │ 8.1     │ 8.4 ✓ │
-│ Readability     │ 8.7     │ 9.0 ✓ │
-│ Maintainability │ 8.3     │ 6.6 ✗ │
-└─────────────────┴─────────┴───────┘
+┌─────────────────────┬─────────┬───────┐
+│         Rule         │ Round 1 │ Final │
+├─────────────────────┼─────────┼───────┤
+│ defect               │ 62%     │ 12% ✓ │
+│ missing_requirement  │ 5%      │ 5%  ✓ │
+│ speculative_code     │ 30%     │ 30% ✓ │
+│ new_dependency        │ 2%      │ 2%  ✓ │
+│ reinvents_existing    │ 8%      │ 8%  ✓ │
+│ unrelated_change      │ 4%      │ 4%  ✓ │
+└─────────────────────┴─────────┴───────┘
+
+Fix:
+- a.js:12 — defect 62%: For some input the task or the callers can pass, an added line returns a wrong result...
 ```
 
 You don't need to ask for it. The agent does it on every code change.
 
-## Dimensions
+## Built-in rules
 
-Every dimension must score 8 or more.
-
-| Dimension | Checks that the code |
+| Rule | Checks |
 |---|---|
-| Correctness | Does what was asked and breaks nothing |
-| Simplicity | Is the minimum that solves the problem |
-| Surgical scope | Only touches what the task needs |
-| Conventions | Follows the repo's existing style and reuses what exists |
-| Readability | Is clear at first read |
-| Maintainability | Keeps the next similar change in one place |
+| defect | An added line misbehaves for some real input |
+| missing_requirement | Something the task asked for is missing |
+| speculative_code | An added line does more than the task needs |
+| new_dependency | A new third-party dependency was added unasked |
+| reinvents_existing | An added line reimplements something that already exists |
+| unrelated_change | A changed line does not trace to the task |
+
+### Project rules
+
+Add project-specific rules in `.jev/rules.json` at the git root:
+
+```json
+[{ "name": "no_console_log", "rule": "never call console.log in production code" }]
+```
+
+Each entry becomes a rule Jev checks and locates the same way as the built-in ones.
 
 ## Requirements
 
