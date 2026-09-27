@@ -15,7 +15,6 @@ import {
   changedFiles,
   filesToLint,
   lintAfterEdit,
-  siblingFiles,
   RULES,
   MAX_CHOICES,
   LINE_CONFIDENCE
@@ -303,116 +302,6 @@ test('filesToLint returns changed files once, then only re-edited files, per ses
 
     const otherSession = await filesToLint({ cwd: dir, sessionId: 's2' });
     assert.deepEqual(new Set(otherSession), new Set(['a.js', 'b.js']));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles sends siblings with the same extension as the changed file', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-'));
-  try {
-    mkdirSync(path.join(root, 'scripts'));
-    writeFileSync(path.join(root, 'scripts', 'common.py'), 'def parse(): pass\n');
-    writeFileSync(path.join(root, 'scripts', 'frequency.py'), 'ROOT = 1\n');
-    const files = siblingFiles(root, ['scripts/frequency.py']);
-    assert.deepEqual(files, [{ path: path.join('scripts', 'common.py'), content: 'def parse(): pass\n' }]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles skips other extensions and the changed file itself', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-ext-'));
-  try {
-    writeFileSync(path.join(root, 'a.py'), 'X = 1\n');
-    writeFileSync(path.join(root, 'a.md'), '# notes\n');
-    const files = siblingFiles(root, ['a.py']);
-    assert.deepEqual(files, []);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles ignores a changed path whose directory resolves outside root', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-escape-'));
-  try {
-    writeFileSync(path.join(root, 'sibling.py'), 'X = 1\n');
-    const files = siblingFiles(root, ['../outside.py']);
-    assert.deepEqual(files, []);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles returns [] for a changed path whose directory does not exist', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-sibling-missing-'));
-  try {
-    assert.deepEqual(siblingFiles(root, ['missing-dir/gone.py']), []);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles stops after 5 files', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-files-'));
-  try {
-    for (let i = 0; i < 7; i++) {
-      writeFileSync(path.join(root, `mod${i}.py`), `X${i} = ${i}\n`);
-    }
-    writeFileSync(path.join(root, 'main.py'), 'X = 1\n');
-    const files = siblingFiles(root, ['main.py']);
-    assert.equal(files.length, 5);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('siblingFiles skips a file that would exceed the 40,000-character cap', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-cap-chars-'));
-  try {
-    const big = 'x'.repeat(15000);
-    writeFileSync(path.join(root, 'mod0.py'), `A = "${big}"\n`);
-    writeFileSync(path.join(root, 'mod1.py'), `B = "${big}"\n`);
-    writeFileSync(path.join(root, 'mod2.py'), `C = "${big}"\n`);
-    writeFileSync(path.join(root, 'mod3.py'), `D = "${big}"\n`);
-    writeFileSync(path.join(root, 'main.py'), 'X = 1\n');
-    const files = siblingFiles(root, ['main.py']);
-    assert.ok(files.length < 4);
-    const total = files.reduce((sum, f) => sum + f.content.length, 0);
-    assert.ok(total <= 40000);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('lintAfterEdit merges siblings of the linted files into state.files', async () => {
-  const dir = makeRepo('jev-lint-siblings-');
-  try {
-    writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
-    execFileSync('git', ['-C', dir, 'add', 'common.js']);
-    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add common']);
-    writeFileSync(path.join(dir, 'main.js'), 'export const known = 1;\n');
-
-    let sentFiles = null;
-    const fetchImpl = async (url, opts) => {
-      const body = JSON.parse(opts.body);
-      sentFiles = body.state.files;
-      const answers = {};
-      for (const [key, q] of Object.entries(body.questions)) {
-        if (q.type === 'noul') answers[key] = { noul: 0.1 };
-        if (q.type === 'choice') {
-          const ids = Object.keys(q.criteria);
-          answers[key] = { choice: ids[0], probabilities: { [ids[0]]: 0.9 } };
-        }
-      }
-      return { ok: true, json: async () => ({ answers }) };
-    };
-
-    await lintAfterEdit({ cwd: dir, sessionId: 'sY', apiKey: 'k', fetchImpl });
-    assert.deepEqual(
-      new Set(sentFiles.map((f) => f.path)),
-      new Set(['a.js', 'common.js'])
-    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

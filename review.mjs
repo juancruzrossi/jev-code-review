@@ -6,7 +6,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -116,54 +116,6 @@ export function tagDiff(diff) {
   }
 
   return { text: out.join('\n'), lines };
-}
-
-const MAX_SIBLING_FILES = 5;
-const MAX_SIBLING_CHARS = 40_000;
-
-export function siblingFiles(root, changedPaths) {
-  const excluded = new Set(changedPaths.map((p) => path.resolve(root, p)));
-  const result = [];
-  let totalChars = 0;
-
-  for (const changedPath of changedPaths) {
-    if (result.length >= MAX_SIBLING_FILES) return result;
-    const abs = path.resolve(root, changedPath);
-    const ext = path.extname(changedPath);
-    const dir = path.dirname(abs);
-    const relDir = path.relative(root, dir);
-    if (relDir.startsWith('..') || path.isAbsolute(relDir)) continue;
-    let entries;
-    try {
-      entries = readdirSync(dir).sort();
-    } catch {
-      continue;
-    }
-    for (const name of entries) {
-      if (result.length >= MAX_SIBLING_FILES) return result;
-      if (path.extname(name) !== ext) continue;
-      const candidate = path.join(dir, name);
-      if (excluded.has(candidate)) continue;
-      let stat;
-      try {
-        stat = statSync(candidate);
-      } catch {
-        continue;
-      }
-      if (!stat.isFile()) continue;
-      let text;
-      try {
-        text = readFileSync(candidate, 'utf8');
-      } catch {
-        continue;
-      }
-      if (totalChars + text.length > MAX_SIBLING_CHARS) continue;
-      excluded.add(candidate);
-      result.push({ path: path.relative(root, candidate), content: text });
-      totalChars += text.length;
-    }
-  }
-  return result;
 }
 
 function findGitRoot(cwd) {
@@ -527,12 +479,7 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
 
   const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
   const tagged = tagDiff(diff);
-  const state = { task: '' };
-  try {
-    const extraFiles = siblingFiles(cwd, files);
-    if (extraFiles.length > 0) state.files = extraFiles;
-  } catch {}
-  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
+  const results = await askJev({ apiKey, state: { task: '' }, rules, tagged, fetchImpl });
   const fixFindings = findings(results, rules, tagged).filter((f) => f.tier === 'fix');
   if (fixFindings.length === 0) return '';
 
