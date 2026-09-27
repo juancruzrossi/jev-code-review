@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -247,6 +248,23 @@ test('changedFiles returns modified tracked and new untracked files, [] outside 
     assert.deepEqual(await changedFiles(outside), []);
   } finally {
     rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('changedFiles returns paths relative to cwd, for both a modified tracked file and a new untracked file, when cwd is a subdirectory of the repo', async () => {
+  const dir = makeRepo('jev-subdir-');
+  try {
+    mkdirSync(path.join(dir, 'src'));
+    writeFileSync(path.join(dir, 'src', 'tracked.js'), 'const t = 1;\n');
+    execFileSync('git', ['-C', dir, 'add', 'src/tracked.js']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'add tracked.js']);
+    writeFileSync(path.join(dir, 'src', 'tracked.js'), 'const t = 2;\n');
+    writeFileSync(path.join(dir, 'src', 'untracked.js'), 'const u = 1;\n');
+
+    const files = await changedFiles(path.join(dir, 'src'));
+    assert.deepEqual(new Set(files), new Set(['tracked.js', 'untracked.js']));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

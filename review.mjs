@@ -400,7 +400,7 @@ async function gitDiffForFiles(cwd, files) {
 export async function changedFiles(cwd) {
   try {
     const [tracked, untracked] = await Promise.all([
-      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', 'HEAD']),
+      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '--relative', 'HEAD']),
       execFileAsync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'])
     ]);
     const files = new Set();
