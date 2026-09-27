@@ -15,7 +15,7 @@ const execFileAsync = promisify(execFile);
 
 export const JEV_API_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 export const JEV_MODEL = 'jev-latest';
-export const FIX_TIER = 0.8;
+export const FIX_TIER = 0.75;
 export const VERIFY_TIER = 0.55;
 export const MAX_CHOICES = 255;
 export const LINE_CONFIDENCE = 0.4;
@@ -25,45 +25,55 @@ export const RULES = [
     name: 'defect',
     needsTask: false,
     locate: true,
+    ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",
     violation:
-      'For some input the task or the callers can pass, an added line returns a wrong result, leaves wrong state, throws when it should not, or fails to throw when it should.',
-    clean: 'Every added line behaves correctly for the inputs it can receive; style, performance and hypothetical misuse do not count.'
+      "Yes: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.",
+    clean: "No: every added line behaves correctly for every input it can receive; style, performance and hypothetical misuse do not count."
   },
   {
     name: 'missing_requirement',
     needsTask: true,
     locate: false,
-    violation: 'Something the task explicitly asks for is not implemented anywhere in the diff.',
-    clean: 'Everything the task explicitly asks for is implemented in the diff.'
+    ask: "Is something the task explicitly asks for absent from the diff?",
+    violation:
+      "Yes: a behavior, flag, output, test, or file that the task names explicitly is not implemented anywhere in the diff.",
+    clean: "No: everything the task names explicitly is implemented in the diff."
   },
   {
     name: 'speculative_code',
     needsTask: true,
     locate: true,
+    ask: "Does the diff add behavior the task did not ask for?",
     violation:
-      'An added line introduces a feature, option, parameter, branch, or validation that the task did not ask for and nothing shown needs, such as validating data this same program just wrote.',
-    clean: 'Every added line is needed by the task or by code shown.'
+      "Yes: it adds an option, flag, parameter, environment or config setting, cache, retry, fallback, or validation of data this program itself produced, which the task never mentions and no shown code needs.",
+    clean: "No: every added behavior is asked for by the task or required by shown code; tests and docs for the requested behavior count as asked for."
   },
   {
     name: 'new_dependency',
     needsTask: false,
     locate: true,
-    violation: 'The diff adds a third-party package, dependency, or test framework to a manifest or lockfile that the task did not ask for.',
-    clean: 'The diff adds no new third-party dependency, or the task asked for it.'
+    ask: "Does the diff add a third-party dependency the task did not ask for?",
+    violation:
+      "Yes: a manifest or lockfile (package.json, requirements.txt, pyproject.toml, go.mod, Cargo.toml) gains a third-party package, library, or test framework that the task never mentions.",
+    clean: "No: no third-party package is added, or the task asked for it."
   },
   {
     name: 'reinvents_existing',
     needsTask: false,
     locate: true,
-    violation: 'An added line reimplements a helper, constant, or logic that already exists in the shown code or context instead of reusing it.',
-    clean: 'Added lines reuse what the shown code already provides.'
+    ask: "Does an added line reimplement something the shown code already provides?",
+    violation:
+      "Yes: an added line re-implements a helper, constant, parser, formatter, or query that already exists in the shown files or context, instead of calling it.",
+    clean: "No: added lines call what the shown code already provides, or nothing shown does the same job."
   },
   {
     name: 'unrelated_change',
     needsTask: true,
     locate: true,
-    violation: 'The diff changes lines unrelated to the task: a drive-by refactor, rename, reformat, or edit to code the task does not touch.',
-    clean: 'Every changed line traces to the task.'
+    ask: "Does the diff change existing code that the task does not need changed?",
+    violation:
+      "Yes: it renames, reformats, reorders, or rewrites existing lines that the requested behavior does not depend on.",
+    clean: "No: every changed existing line is needed for the requested behavior; new files, tests, and docs for the requested behavior count as needed."
   }
 ];
 
@@ -150,7 +160,7 @@ export function buildQuestions(rules, lineIds) {
   for (const rule of rules) {
     questions[rule.name] = {
       type: 'noul',
-      instructions: 'Is this true of the change?',
+      instructions: rule.ask ?? 'Is this true of the change?',
       criteria: { true: rule.violation, false: rule.clean }
     };
     if (rule.locate && lineIds.length > 0) {

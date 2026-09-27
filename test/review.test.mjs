@@ -61,6 +61,14 @@ test('buildQuestions emits one noul per rule and one choice per locating rule', 
   }
 });
 
+test('each built-in rule asks its own question', () => {
+  const questions = buildQuestions(RULES, ['L0001']);
+  for (const rule of RULES) {
+    assert.equal(typeof rule.ask, 'string');
+    assert.equal(questions[rule.name].instructions, rule.ask);
+  }
+});
+
 test('loadRepoRules reads .jev/rules.json from a temp git root found from a subdirectory', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
   try {
@@ -218,7 +226,7 @@ test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFi
   }
 });
 
-test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {
+test('tier boundaries: 0.75 fix, 0.74 verify, 0.55 verify, 0.54 none', () => {
   const tagged = { lines: new Map() };
   const rules = [RULES[1]]; // missing_requirement: needsTask true, locate false
   const caseFor = (probability) => {
@@ -226,8 +234,8 @@ test('tier boundaries: 0.80 fix, 0.79 verify, 0.55 verify, 0.54 none', () => {
     const [f] = findings([{ response, rules }], rules, tagged);
     return f.tier;
   };
-  assert.equal(caseFor(0.8), 'fix');
-  assert.equal(caseFor(0.79), 'verify');
+  assert.equal(caseFor(0.75), 'fix');
+  assert.equal(caseFor(0.74), 'verify');
   assert.equal(caseFor(0.55), 'verify');
   assert.equal(caseFor(0.54), 'none');
 });

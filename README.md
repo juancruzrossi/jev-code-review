@@ -8,7 +8,7 @@ Works with Claude Code, Codex, and OpenCode.
 
 1. The agent changes code.
 2. Jev asks a small yes/no rule for each concern and, when a rule is true, which added line breaks it.
-3. Findings land in two tiers: Fix (80% or more) must be fixed; Verify (55-79%) should be opened and changed only if the problem is real. The agent fixes Fix items and asks Jev again, up to 3 rounds; it stops early when the Fix count stops dropping.
+3. Findings land in two tiers: Fix (75% or more) must be fixed; Verify (55-74%) should be opened and changed only if the problem is real. The agent fixes Fix items and asks Jev again, up to 3 rounds; it stops early when the Fix count stops dropping.
 4. The agent ends its answer with the table. `Final` is the last round:
 
 ```
