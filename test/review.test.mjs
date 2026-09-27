@@ -69,6 +69,14 @@ test('each built-in rule asks its own question', () => {
   }
 });
 
+test('finding text drops the answer prefix of the rule criterion', () => {
+  const rules = [RULES[0]];
+  const response = { answers: { defect: { noul: 0.9 } } };
+  const [finding] = findings([{ response, rules }], rules, { lines: new Map() });
+  assert.doesNotMatch(finding.violation, /^Yes:/);
+  assert.match(finding.violation, /^for some input/);
+});
+
 test('loadRepoRules reads .jev/rules.json from a temp git root found from a subdirectory', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
   try {

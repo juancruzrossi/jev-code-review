@@ -320,7 +320,7 @@ export function findings(results, rules, tagged) {
     const entry = byName.get(rule.name);
     return {
       name: rule.name,
-      violation: rule.violation,
+      violation: rule.violation.replace(/^Yes: /, ''),
       probability: entry.probability,
       where: entry.where,
       lineConfidence: entry.lineConfidence,
