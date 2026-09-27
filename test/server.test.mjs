@@ -240,7 +240,7 @@ test('two pipelined calls sent before either response arrives still resolve as r
   assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
 });
 
-test('a changed file importing a local module merges it into state.files', async () => {
+test('a sibling file with the same extension as a changed file merges it into state.files', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'jev-server-import-'));
   try {
     writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
@@ -275,7 +275,7 @@ index 111..222 100644
   }
 });
 
-test('a file already passed by the agent is not duplicated when it is also a local import', async () => {
+test('a file already passed by the agent is not duplicated when it is also a sibling', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'jev-server-import-dup-'));
   try {
     writeFileSync(path.join(dir, 'common.js'), 'export const helper = () => 1;\n');
