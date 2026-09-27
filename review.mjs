@@ -313,6 +313,10 @@ export function readApiKey() {
   return process.env.JEV_API_KEY || null;
 }
 
+export function extractPatchText(fields) {
+  return typeof fields?.input === 'string' ? fields.input : typeof fields?.patch === 'string' ? fields.patch : '';
+}
+
 export function filesFromPatchText(patchText) {
   const files = [];
   const pattern = /^\*\*\* (?:Add|Update) File: (.+)$/gm;

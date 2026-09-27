@@ -1,22 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { makeRepo } from './git-repo-fixture.mjs';
 
 import plugin from '../.opencode/plugins/jev-code-review.mjs';
-
-function makeRepo() {
-  const dir = mkdtempSync(path.join(tmpdir(), 'jev-opencode-repo-'));
-  execFileSync('git', ['init', '-q', dir]);
-  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
-  writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\n');
-  execFileSync('git', ['-C', dir, 'add', 'a.js']);
-  execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'init']);
-  return dir;
-}
 
 function stubFetch(probability) {
   return async (url, opts) => {
@@ -35,7 +23,7 @@ function stubFetch(probability) {
 }
 
 test('tool.execute.after appends the lint text only for a Fix-tier finding', async () => {
-  const dir = makeRepo();
+  const dir = makeRepo('jev-opencode-repo-');
   const originalFetch = globalThis.fetch;
   const originalCwd = process.cwd();
   const originalKey = process.env.JEV_API_KEY;
@@ -62,7 +50,7 @@ test('tool.execute.after appends the lint text only for a Fix-tier finding', asy
 });
 
 test('tool.execute.after leaves output untouched below the Fix tier', async () => {
-  const dir = makeRepo();
+  const dir = makeRepo('jev-opencode-repo-');
   const originalFetch = globalThis.fetch;
   const originalCwd = process.cwd();
   const originalKey = process.env.JEV_API_KEY;

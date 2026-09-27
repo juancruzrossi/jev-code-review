@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FULL } from '../../context.mjs';
-import { filesFromPatchText, lintAfterEdit, readApiKey } from '../../review.mjs';
+import { extractPatchText, filesFromPatchText, lintAfterEdit, readApiKey } from '../../review.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverPath = path.resolve(__dirname, '../../server.mjs');
@@ -17,8 +17,7 @@ const EDIT_TOOLS = ['edit', 'write', 'apply_patch', 'patch'];
 function filesFromOpencodeInput({ tool, args }) {
   if (!EDIT_TOOLS.includes(tool)) return [];
   if (typeof args?.filePath === 'string') return [args.filePath];
-  const patchText = typeof args?.patch === 'string' ? args.patch : typeof args?.input === 'string' ? args.input : '';
-  return filesFromPatchText(patchText);
+  return filesFromPatchText(extractPatchText(args));
 }
 
 export default async () => {

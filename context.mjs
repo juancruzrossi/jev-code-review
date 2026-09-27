@@ -7,7 +7,7 @@
 
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { filesFromPatchText, lintAfterEdit, readApiKey } from './review.mjs';
+import { extractPatchText, filesFromPatchText, lintAfterEdit, readApiKey } from './review.mjs';
 
 export const MARKER_TAG = 'jev:previous';
 export const MARKER_HINT = `<!-- ${MARKER_TAG} ... -->`;
@@ -35,8 +35,7 @@ function filesFromPostToolUse(data) {
     return typeof toolInput?.file_path === 'string' ? [toolInput.file_path] : [];
   }
   if (toolName === 'apply_patch') {
-    const patchText = typeof toolInput?.input === 'string' ? toolInput.input : typeof toolInput?.patch === 'string' ? toolInput.patch : '';
-    return filesFromPatchText(patchText);
+    return filesFromPatchText(extractPatchText(toolInput));
   }
   return [];
 }
