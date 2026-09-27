@@ -7,7 +7,7 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, loadProjectInstructions, PROJECT_RULES_RULE, askJev, findings, formatWhere, readApiKey } from './review.mjs';
+import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -55,11 +55,6 @@ function renderTable(ruleNames, rounds) {
   ].join('\n');
 }
 
-function findingLine(finding) {
-  const percent = Math.round(finding.probability * 100);
-  return `- ${formatWhere(finding)}${finding.name} ${percent}%: ${finding.violation}`;
-}
-
 function verdictLine(round, blockFindings, noProgress) {
   if (blockFindings.length === 0) return 'PASSED — deliver.';
   if (noProgress) return `No real progress since the last round — ${DELIVER}`;
@@ -82,22 +77,29 @@ async function runReview(args) {
   const loop = findLoop(task);
   const pinnedTask = loop ? loop.task : task;
 
-  const projectInstructions = loadProjectInstructions(process.cwd());
-  const rules = [...RULES, ...loadRepoRules(process.cwd())];
-  if (projectInstructions) rules.push(PROJECT_RULES_RULE);
-  const ruleNames = rules.map((r) => r.name);
+  const tagged = tagDiff(diff);
+  const root = findGitRoot(process.cwd());
+  const changedPaths = [...new Set([...tagged.lines.values()].map((info) => info.path))];
+  const projRules = root ? await projectRules({ apiKey, root, changedPaths }) : [];
+  const rules = [...RULES, ...loadRepoRules(process.cwd()), ...projRules];
 
   const state = { task: pinnedTask };
   if (Array.isArray(files) && files.length > 0) state.files = files;
   if (context) state.context = context;
-  if (projectInstructions) state.project_rules = projectInstructions;
 
-  const tagged = tagDiff(diff);
-  const results = await askJev({ apiKey, state, rules, tagged });
+  const results = await askInStages({ apiKey, state, rules, tagged });
   const found = findings(results, rules, tagged);
 
+  const nonProjectFound = found.filter((f) => f.source === undefined);
+  const projectFound = found.filter((f) => f.source !== undefined);
+  const tableFound =
+    projectFound.length > 0
+      ? [...nonProjectFound, { name: 'project rules', probability: Math.max(...projectFound.map((f) => f.probability)) }]
+      : nonProjectFound;
+  const ruleNames = tableFound.map((f) => f.name);
+
   const samePriorRules = loop && loop.rules.length === ruleNames.length && loop.rules.every((n, i) => n === ruleNames[i]);
-  const currentPercents = found.map((f) => Math.round(f.probability * 100));
+  const currentPercents = tableFound.map((f) => Math.round(f.probability * 100));
   const priorRounds = samePriorRules ? loop.rounds : [];
   const rounds = [...priorRounds, currentPercents];
   const round = priorRounds.length + 1;

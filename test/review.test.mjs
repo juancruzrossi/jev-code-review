@@ -2,18 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, readFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   tagDiff,
   buildQuestions,
   loadRepoRules,
-  loadProjectInstructions,
   instructionFiles,
   extractRules,
+  projectRules,
   askJev,
+  askInStages,
   findings,
+  findingLine,
   formatWhere,
   readApiKey,
   changedFiles,
@@ -128,45 +130,6 @@ test('loadRepoRules throws on invalid JSON', () => {
   }
 });
 
-test('loadProjectInstructions joins AGENTS.md and CLAUDE.md with a header line per file', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
-  try {
-    mkdirSync(path.join(root, '.git'));
-    writeFileSync(path.join(root, 'AGENTS.md'), 'Never call console.log.');
-    writeFileSync(path.join(root, 'CLAUDE.md'), 'Money amounts are integers in cents.');
-    const text = loadProjectInstructions(root);
-    assert.match(text, /# AGENTS\.md/);
-    assert.match(text, /Never call console\.log\./);
-    assert.match(text, /# CLAUDE\.md/);
-    assert.match(text, /Money amounts are integers in cents\./);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('loadProjectInstructions returns null when neither file exists', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
-  try {
-    mkdirSync(path.join(root, '.git'));
-    assert.equal(loadProjectInstructions(root), null);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('loadProjectInstructions caps the joined text at 6000 characters', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
-  try {
-    mkdirSync(path.join(root, '.git'));
-    writeFileSync(path.join(root, 'AGENTS.md'), 'a'.repeat(4000));
-    writeFileSync(path.join(root, 'CLAUDE.md'), 'b'.repeat(4000));
-    const text = loadProjectInstructions(root);
-    assert.equal(text.length, 6000);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 function makeMonorepo() {
   const root = mkdtempSync(path.join(tmpdir(), 'jev-monorepo-'));
   mkdirSync(path.join(root, '.git'));
@@ -235,6 +198,45 @@ test('instructionFiles does not follow a symlinked AGENTS.md or a path escaping 
   }
 });
 
+test('projectRules returns [] for an empty AGENTS.md, without calling fetch', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  const cachePath = cachePathFor('');
+  try {
+    mkdirSync(path.join(root, '.git'));
+    writeFileSync(path.join(root, 'AGENTS.md'), '');
+    let called = false;
+    const fetchImpl = async () => {
+      called = true;
+      return { ok: true, json: async () => ({ answers: {} }) };
+    };
+    const rules = await projectRules({ apiKey: 'k', root, changedPaths: ['x.js'], fetchImpl });
+    assert.deepEqual(rules, []);
+    assert.equal(called, false);
+  } finally {
+    rmSync(cachePath, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('instructionFiles skips an unreadable AGENTS.md instead of throwing', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  try {
+    mkdirSync(path.join(root, '.git'));
+    const blocked = path.join(root, 'AGENTS.md');
+    writeFileSync(blocked, 'Never call console.log directly.');
+    chmodSync(blocked, 0o000);
+    try {
+      assert.doesNotThrow(() => instructionFiles(root, ['x.js']));
+      const files = instructionFiles(root, ['x.js']);
+      assert.deepEqual(files, []);
+    } finally {
+      chmodSync(blocked, 0o644);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function cachePathFor(content) {
   const key = createHash('sha1').update(content).digest('hex');
   return path.join(tmpdir(), `jev-rules-${key}.json`);
@@ -289,6 +291,139 @@ test('extractRules returns [] and writes no cache when the request fails', async
   } finally {
     rmSync(cachePath, { force: true });
   }
+});
+
+test('projectRules turns each extracted line into a locate rule named for its position, with dir and source', async () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'jev-repo-'));
+  const cachePaths = [];
+  try {
+    mkdirSync(path.join(root, '.git'));
+    mkdirSync(path.join(root, 'packages', 'api'), { recursive: true });
+    writeFileSync(path.join(root, 'packages', 'api', 'AGENTS.md'), 'Never call console.log directly in this codebase.\n');
+    const fetchImpl = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      cachePaths.push(cachePathFor(readFileSync(path.join(root, 'packages', 'api', 'AGENTS.md'), 'utf8')));
+      const answers = {};
+      for (const key of Object.keys(body.questions)) answers[key] = { noul: 0.9 };
+      return { ok: true, json: async () => ({ answers }) };
+    };
+    const rules = await projectRules({ apiKey: 'k', root, changedPaths: ['packages/api/x.js'], fetchImpl });
+    assert.equal(rules.length, 1);
+    assert.equal(rules[0].name, 'agents_1');
+    assert.equal(rules[0].dir, 'packages/api');
+    assert.equal(rules[0].source, 'packages/api/AGENTS.md');
+    assert.equal(rules[0].ruleText, 'Never call console.log directly in this codebase.');
+    assert.equal(rules[0].locate, true);
+  } finally {
+    for (const p of cachePaths) rmSync(p, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('projectRules returns [] when root is not a valid git root', async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), 'jev-noroot-'));
+  try {
+    const rules = await projectRules({ apiKey: 'k', root: path.join(outside, 'missing'), changedPaths: ['x.js'], fetchImpl: async () => ({ ok: true, json: async () => ({ answers: {} }) }) });
+    assert.deepEqual(rules, []);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('findingLine prints the rule text and source for a project rule, and name plus violation for a built-in rule', () => {
+  const projectFinding = {
+    probability: 0.95,
+    where: { path: 'packages/api/x.js', line: 3 },
+    lineConfidence: 0.9,
+    ruleText: 'Never call console.log directly in this codebase.',
+    source: 'packages/api/AGENTS.md'
+  };
+  assert.equal(
+    findingLine(projectFinding),
+    '- packages/api/x.js:3 — "Never call console.log directly in this codebase." (packages/api/AGENTS.md) 95%'
+  );
+
+  const builtIn = { probability: 0.9, where: { path: 'a.js', line: 2 }, lineConfidence: 0.9, name: 'defect', violation: 'a bug' };
+  assert.equal(findingLine(builtIn), '- a.js:2 — defect 90%: a bug');
+});
+
+test('askInStages skips the locate stage when no project rule reaches the advisory tier', async () => {
+  const tagged = tagDiff('diff --git a/x.js b/x.js\nindex 1..2 100644\n--- a/x.js\n+++ b/x.js\n@@ -1,1 +1,2 @@\n a\n+b\n');
+  const projectRule = {
+    name: 'agents_1',
+    needsTask: false,
+    locate: true,
+    dir: '',
+    source: 'AGENTS.md',
+    ruleText: 'r',
+    ask: 'q?',
+    violation: 'Yes: v',
+    clean: 'No: c'
+  };
+  let calls = 0;
+  const fetchImpl = async (url, opts) => {
+    calls += 1;
+    const body = JSON.parse(opts.body);
+    const answers = {};
+    for (const key of Object.keys(body.questions)) answers[key] = { noul: 0.05 };
+    return { ok: true, json: async () => ({ answers }) };
+  };
+  const results = await askInStages({ apiKey: 'k', state: { task: 't' }, rules: [projectRule], tagged, fetchImpl });
+  assert.equal(calls, 1);
+  const found = findings(results, [projectRule], tagged);
+  assert.equal(found[0].tier, 'none');
+});
+
+test('askInStages asks the locate question only for an elevated project rule, scoped to its own lines', async () => {
+  const diff = `diff --git a/api/x.js b/api/x.js
+index 1..2 100644
+--- a/api/x.js
++++ b/api/x.js
+@@ -1,1 +1,2 @@
+ a
++console.log(1);
+diff --git a/web/y.js b/web/y.js
+index 1..2 100644
+--- a/web/y.js
++++ b/web/y.js
+@@ -1,1 +1,2 @@
+ a
++const y = 1;
+`;
+  const tagged = tagDiff(diff);
+  const apiRule = {
+    name: 'agents_1',
+    needsTask: false,
+    locate: true,
+    dir: 'api',
+    source: 'api/AGENTS.md',
+    ruleText: 'no console.log',
+    ask: 'q?',
+    violation: 'Yes: v',
+    clean: 'No: c'
+  };
+  const calls = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    calls.push(body.questions);
+    const answers = {};
+    for (const [key, q] of Object.entries(body.questions)) {
+      if (q.type === 'noul') answers[key] = { noul: 0.95 };
+      if (q.type === 'choice') {
+        const ids = Object.keys(q.criteria);
+        answers[key] = { choice: ids[0], probabilities: { [ids[0]]: 0.9 } };
+      }
+    }
+    return { ok: true, json: async () => ({ answers }) };
+  };
+  const results = await askInStages({ apiKey: 'k', state: { task: 't' }, rules: [apiRule], tagged, fetchImpl });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].agents_1_line, undefined);
+  assert.deepEqual(Object.keys(calls[1].agents_1_line.criteria), ['L0001']);
+
+  const found = findings(results, [apiRule], tagged);
+  assert.equal(found[0].tier, 'block');
+  assert.deepEqual(found[0].where, { path: 'api/x.js', line: 2 });
 });
 
 function bigDiff(count) {
