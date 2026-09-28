@@ -17,7 +17,6 @@ Works with Claude Code, Codex, and OpenCode.
 ├──────────────────────┼───────┤
 │ addresses_task       │ 8% ✓  │
 │ unrelated_change     │ 16% ✓ │
-│ needs_clarification  │ 5% ✓  │
 │ missing_requirement  │ 15% ✓ │
 │ defect               │ 92% ✗ │
 └──────────────────────┴───────┘
@@ -30,13 +29,14 @@ You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. T
 
 Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
+The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — deliver.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+
 ## Built-in rules
 
 | Rule | Checks |
 |---|---|
 | addresses_task | The change fails to do what the task asks, or breaks a stated constraint |
 | unrelated_change | A changed line does not trace to the task |
-| needs_clarification | The task left out information this change needed |
 | missing_requirement | Something the task asked for is missing |
 | defect | An added line misbehaves for some real input |
 
@@ -53,6 +53,10 @@ Jev also checks a change against your project's own conventions:
 ```
 
 Each entry becomes a rule Jev checks and locates the same way as the built-in ones.
+
+## Local decision log
+
+Each successful review appends a JSON line to `$XDG_STATE_HOME/jev-code-review/decisions.jsonl` (default: `~/.local/state/jev-code-review/decisions.jsonl`). It records the timestamp, repository folder name, round, verdict, and each rule's name, probability, tier, file and line. It contains no code, diff, task or rule text, and never leaves your machine. A log write failure does not fail the review.
 
 ## Requirements
 

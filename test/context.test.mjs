@@ -1,3 +1,4 @@
+import './isolated-tmp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -160,4 +161,11 @@ test('SessionStart still emits the full context, unaffected by the PostToolUse h
 test('full context tells callers to always pass their working directory', () => {
   assert.match(FULL, /task, diff, cwd\?, files\?, context\?/);
   assert.match(FULL, /always pass `cwd` = the agent's current working directory/);
+});
+
+test('full context describes honest verdicts without promising correctness', () => {
+  assert.match(FULL, /No findings/);
+  assert.match(FULL, /No blockers/);
+  assert.match(FULL, /neither guarantees correctness/);
+  assert.doesNotMatch(FULL, /PASSED/);
 });

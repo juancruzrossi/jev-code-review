@@ -7,8 +7,10 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { statSync } from 'node:fs';
-import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
+import { appendFileSync, mkdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
+import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -17,7 +19,6 @@ const openLoops = new Map();
 
 function findLoop(task) {
   if (openLoops.has(task)) return openLoops.get(task);
-  if (openLoops.size === 1) return [...openLoops.values()][0];
   return null;
 }
 
@@ -30,15 +31,13 @@ function padLeftAlign(text, width) {
   return ' ' + text + ' '.repeat(width - 1 - text.length);
 }
 
-// Final is the last round. ✓/✗ instead of emoji: emoji width varies by
-// terminal font and would misalign the right border.
-function renderTable(ruleNames, rounds) {
+function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
   const headers = ['Rule', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), 'Final'];
-  const rows = ruleNames.map((name, row) => [
+  const rows = tableFound.map(({ name, probability }, row) => [
     name,
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
-    `${finals[row]}% ${finals[row] / 100 < BLOCK_TIER ? '✓' : '✗'}`
+    `${finals[row]}% ${probability < ADVISE_TIER ? '✓' : probability < BLOCK_TIER ? '!' : '✗'}`
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);
@@ -56,8 +55,12 @@ function renderTable(ruleNames, rounds) {
   ].join('\n');
 }
 
-function verdictLine(round, blockFindings, noProgress) {
-  if (blockFindings.length === 0) return 'PASSED — deliver.';
+function verdictLine(round, blockFindings, adviseFindings, noProgress) {
+  if (blockFindings.length === 0) {
+    return adviseFindings.length === 0
+      ? 'No findings — deliver.'
+      : `No blockers — ${adviseFindings.length} to check. Open each line and change it only if the problem is real.`;
+  }
   if (noProgress) return `No real progress since the last round — ${DELIVER}`;
   if (round < MAX_ROUNDS) {
     return `Round ${round}/${MAX_ROUNDS} — resolve each must-resolve item, then call jev_review again if you changed code.`;
@@ -117,7 +120,7 @@ async function runReview(args) {
   const hasProgress = previousRound ? blockFindings.length < previousBlockCount : true;
   const noProgress = round >= 2 && blockFindings.length > 0 && round < MAX_ROUNDS && !hasProgress;
 
-  const lines = [renderTable(ruleNames, rounds), ''];
+  const lines = [renderTable(tableFound, rounds), ''];
   if (blockFindings.length > 0) {
     lines.push('Must resolve — fix it at the line, or explain in your answer why it is not a real problem:');
     for (const f of blockFindings) lines.push(findingLine(f));
@@ -130,11 +133,25 @@ async function runReview(args) {
   }
   if (lines[lines.length - 1] === '') lines.pop();
   lines.push('');
-  lines.push(verdictLine(round, blockFindings, noProgress));
+  lines.push(verdictLine(round, blockFindings, adviseFindings, noProgress));
 
   const terminal = blockFindings.length === 0 || noProgress || round >= MAX_ROUNDS;
   if (terminal) openLoops.delete(pinnedTask);
   else openLoops.set(pinnedTask, { task: pinnedTask, rules: ruleNames, rounds });
+
+  try {
+    const dir = path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local', 'state'), 'jev-code-review');
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(path.join(dir, 'decisions.jsonl'), JSON.stringify({
+      ts: new Date().toISOString(),
+      repo: root ? path.basename(root) : null,
+      round,
+      verdict: blockFindings.length > 0 ? 'block' : adviseFindings.length > 0 ? 'check' : 'clean',
+      findings: found.map((f) => ({
+        rule: f.name, probability: f.probability, tier: f.tier, file: f.where?.path ?? null, line: f.where?.line ?? null
+      }))
+    }) + '\n');
+  } catch {}
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }

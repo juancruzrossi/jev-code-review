@@ -40,15 +40,6 @@ export const RULES = [
     clean: "No: every changed existing line is needed for the requested behavior; new files, tests, and docs for the requested behavior count as needed."
   },
   {
-    name: 'needs_clarification',
-    needsTask: true,
-    locate: false,
-    ask: "Did the task leave out information this change needed?",
-    violation:
-      "Yes: the task is missing information needed to make this change soundly, so the diff had to guess a requirement, a behavior, or a value.",
-    clean: "No: the task gives enough information for this change."
-  },
-  {
     name: 'missing_requirement',
     needsTask: true,
     locate: false,

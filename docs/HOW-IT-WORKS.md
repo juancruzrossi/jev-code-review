@@ -27,7 +27,6 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ├──────────────────────┼───────┤
 │ addresses_task       │ 8% ✓  │
 │ unrelated_change     │ 16% ✓ │
-│ needs_clarification  │ 5% ✓  │
 │ missing_requirement  │ 15% ✓ │
 │ defect               │ 92% ✗ │
 └──────────────────────┴───────┘
@@ -45,13 +44,14 @@ Findings come in two tiers:
 
 When Jev is unsure about the exact line, the finding says `(line uncertain)`. The agent ends its answer with the table, so you see the result too.
 
+The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — deliver.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+
 ## What it checks
 
 | Rule | Catches |
 |---|---|
 | `addresses_task` | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
 | `unrelated_change` | Renames, reformatting, or rewrites of code your request did not need changed. |
-| `needs_clarification` | Missing information in your request that made the agent guess a requirement, a behavior, or a value. |
 | `missing_requirement` | Something your request explicitly asked for that is not in the change. |
 | `defect` | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
 
