@@ -1,7 +1,7 @@
 import './isolated-tmp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeRepo } from './git-repo-fixture.mjs';
 
@@ -49,6 +49,5 @@ test('tool.execute.after appends the finding text after a file change, and leave
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.JEV_API_KEY;
     else process.env.JEV_API_KEY = originalKey;
-    rmSync(dir, { recursive: true, force: true });
   }
 });

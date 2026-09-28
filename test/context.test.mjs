@@ -2,7 +2,7 @@ import './isolated-tmp.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { rmSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRepo } from './git-repo-fixture.mjs';
@@ -44,58 +44,27 @@ function runHook(payload, extraEnv = {}) {
 }
 
 test('a Claude Bash payload and a Codex apply_patch payload each report the right path:line, and a read-only tool call with no change prints nothing', async () => {
-  {
+  const payloads = [
+    { tool_name: 'Bash', tool_input: { command: "cat >> a.js <<'EOF'\nconst b = 2;\nEOF" } },
+    { tool_name: 'apply_patch', tool_input: { command: '*** Begin Patch\n*** Update File: a.js\n@@\n-const b = 2;\n+const b = 3;\n*** End Patch' } }
+  ];
+  for (const payload of payloads) {
     const dir = makeRepo('jev-hook-repo-');
-    try {
-      writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
-      const stdout = await runHook(
-        {
-          hook_event_name: 'PostToolUse',
-          cwd: dir,
-          session_id: 's1',
-          tool_name: 'Bash',
-          tool_input: { command: "cat >> a.js <<'EOF'\nconst b = 2;\nEOF" }
-        },
-        { JEV_STUB_PROB: '0.9' }
-      );
-      const message = JSON.parse(stdout);
-      assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-      assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, session_id: 's1', ...payload },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    const message = JSON.parse(stdout);
+    assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
   }
   {
     const dir = makeRepo('jev-hook-repo-');
-    try {
-      writeFileSync(path.join(dir, 'a.js'), 'const a = 1;\nconst b = 2;\n');
-      const stdout = await runHook(
-        {
-          hook_event_name: 'PostToolUse',
-          cwd: dir,
-          session_id: 's1',
-          tool_name: 'apply_patch',
-          tool_input: { command: '*** Begin Patch\n*** Update File: a.js\n@@\n-const b = 2;\n+const b = 3;\n*** End Patch' }
-        },
-        { JEV_STUB_PROB: '0.9' }
-      );
-      const message = JSON.parse(stdout);
-      assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-      assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  }
-  {
-    const dir = makeRepo('jev-hook-repo-');
-    try {
-      const stdout = await runHook(
-        { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Bash', tool_input: { command: 'ls' } },
-        { JEV_STUB_PROB: '0.9' }
-      );
-      assert.equal(stdout, '');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+    const stdout = await runHook(
+      { hook_event_name: 'PostToolUse', cwd: dir, tool_name: 'Bash', tool_input: { command: 'ls' } },
+      { JEV_STUB_PROB: '0.9' }
+    );
+    assert.equal(stdout, '');
   }
 });
