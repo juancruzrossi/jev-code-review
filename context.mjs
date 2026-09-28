@@ -14,7 +14,7 @@ export const FIX_RULE =
 
 export const FULL = `Jev is a code-review model (via the \`jev-code-review\` MCP server) that asks small yes/no rules about a change and locates the line each one breaks. It solves the problem of a coding agent grading its own work.
 
-Tool available: \`jev_review\` (task, diff, cwd?, files?, context?). Its text result has a ready-made box-drawing table, must-resolve and check sections, and a verdict line.
+Tool available: \`jev_review\` (task, diff, cwd?, files?, context?). Its text result has a ready-made box-drawing table titled "Jev Code Review", must-resolve and check sections, and a verdict line.
 
 Mandatory rules:
 - \`task\` is the user's request as given, the same in every round; \`diff\` is only the real diff of the change (e.g. \`git diff\`), no hand-written pseudo-diffs or changes outside it — describe those in \`context\` instead.

@@ -23,6 +23,7 @@ export const LINE_CONFIDENCE = 0.4;
 export const RULES = [
   {
     name: 'addresses_task',
+    label: 'Addresses task',
     needsTask: true,
     locate: false,
     ask: "Does the change fail to do what the task asks?",
@@ -32,6 +33,7 @@ export const RULES = [
   },
   {
     name: 'unrelated_change',
+    label: 'Unrelated changes',
     needsTask: true,
     locate: true,
     ask: "Does the diff change existing code that the task does not need changed?",
@@ -41,6 +43,7 @@ export const RULES = [
   },
   {
     name: 'missing_requirement',
+    label: 'Missing requirements',
     needsTask: true,
     locate: false,
     ask: "Is something the task explicitly asks for absent from the diff?",
@@ -50,6 +53,7 @@ export const RULES = [
   },
   {
     name: 'defect',
+    label: 'Defects',
     needsTask: false,
     locate: true,
     ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",
@@ -554,12 +558,16 @@ export function formatWhere(finding) {
   return `${finding.where.path}:${finding.where.line}${uncertain} — `;
 }
 
+export function ruleLabel(name) {
+  return RULES.find((rule) => rule.name === name)?.label ?? name.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
 export function findingLine(finding) {
   const percent = Math.round(finding.probability * 100);
   if (finding.source) {
     return `- ${formatWhere(finding)}"${finding.ruleText}" (${finding.source}) ${percent}%`;
   }
-  return `- ${formatWhere(finding)}${finding.name} ${percent}%: ${finding.violation}`;
+  return `- ${formatWhere(finding)}${ruleLabel(finding.name)} ${percent}%: ${finding.violation}`;
 }
 
 const ENV_KEY_PATTERN = /^\s*(?:export\s+)?JEV_API_KEY\s*=\s*(.*)$/;

@@ -345,7 +345,7 @@ test('findingLine prints the rule text and source for a project rule, and name p
   );
 
   const builtIn = { probability: 0.9, where: { path: 'a.js', line: 2 }, lineConfidence: 0.9, name: 'defect', violation: 'a bug' };
-  assert.equal(findingLine(builtIn), '- a.js:2 — defect 90%: a bug');
+  assert.equal(findingLine(builtIn), '- a.js:2 — Defects 90%: a bug');
 });
 
 test('askInStages skips the locate stage when no project rule reaches the advisory tier', async () => {
@@ -736,7 +736,7 @@ for (const failure of ['outage', 'missing']) {
         return { ok: true, json: async () => ({ answers: { defect: { noul: 0.95 } } }) };
       } };
       assert.equal(await lintAfterEdit(opts), '');
-      assert.match(await lintAfterEdit(opts), /defect 95%/);
+      assert.match(await lintAfterEdit(opts), /Defects 95%/);
       assert.equal(calls, 2);
       assert.equal(await lintAfterEdit(opts), '');
       assert.equal(calls, 2);

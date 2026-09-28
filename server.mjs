@@ -10,7 +10,7 @@ import readline from 'node:readline';
 import { appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
+import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, ruleLabel, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -31,23 +31,29 @@ function padLeftAlign(text, width) {
   return ' ' + text + ' '.repeat(width - 1 - text.length);
 }
 
+const TABLE_TITLE = 'Jev Code Review';
+
 function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
   const headers = ['Rule', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), 'Final'];
   const rows = tableFound.map(({ name, probability }, row) => [
-    name,
+    ruleLabel(name),
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
     `${finals[row]}% ${probability < ADVISE_TIER ? '✓' : probability < BLOCK_TIER ? '!' : '✗'}`
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);
+  const innerWidth = () => widths.reduce((sum, w) => sum + w, 0) + widths.length - 1;
+  widths[widths.length - 1] += Math.max(0, TABLE_TITLE.length + 2 - innerWidth());
 
   const border = (left, mid, right) => left + widths.map((w) => '─'.repeat(w)).join(mid) + right;
   const headerLine = '│' + headers.map((h, i) => padCenter(h, widths[i])).join('│') + '│';
   const dataLines = rows.map((row) => '│' + row.map((cell, i) => padLeftAlign(cell, widths[i])).join('│') + '│');
 
   return [
-    border('┌', '┬', '┐'),
+    '┌' + '─'.repeat(innerWidth()) + '┐',
+    '│' + padCenter(TABLE_TITLE, innerWidth()) + '│',
+    border('├', '┬', '┤'),
     headerLine,
     border('├', '┼', '┤'),
     ...dataLines,
@@ -102,7 +108,7 @@ async function runReview(args) {
   const projectFound = found.filter((f) => f.source !== undefined);
   const tableFound =
     projectFound.length > 0
-      ? [...nonProjectFound, { name: 'project rules', probability: Math.max(...projectFound.map((f) => f.probability)) }]
+      ? [...nonProjectFound, { name: 'project_rules', probability: Math.max(...projectFound.map((f) => f.probability)) }]
       : nonProjectFound;
   const ruleNames = tableFound.map((f) => f.name);
 

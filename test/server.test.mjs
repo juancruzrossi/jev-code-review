@@ -191,6 +191,17 @@ test('a single call sends its own task, reports round 1, and never prints a mark
   assert.doesNotMatch(text, /jev:previous/);
 });
 
+test('the table starts with a full-width Jev Code Review title and every line has the same width', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.1' });
+  const lines = extractResult(stdout, 1).content[0].text.split('\n');
+  const table = lines.slice(0, lines.findIndex((l) => l.startsWith('└')) + 1);
+  assert.match(table[0], /^┌─+┐$/);
+  assert.match(table[1], /^│\s+Jev Code Review\s+│$/);
+  assert.match(table[2], /^├─+┬[─┬]*┤$/);
+  assert.match(table[3], /│\s+Rule\s+│/);
+  assert.equal(new Set(table.map((l) => [...l].length)).size, 1);
+});
+
 test('below the advise tier reports no findings with no Must-resolve or Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
@@ -203,21 +214,21 @@ test('a must-resolve finding is printed with its path:line and the verdict names
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /^Must resolve/m);
-  assert.match(text, /- a\.js:2 — defect 95%:/);
+  assert.match(text, /- a\.js:2 — Defects 95%:/);
   assert.match(text, /Round 1\/3/);
 });
 
 test('a must-resolve finding with a low line confidence flags the location as uncertain', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95', JEV_STUB_LINE_PROB: '0.3' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /- a\.js:2 \(line uncertain\) — defect 95%:/);
+  assert.match(text, /- a\.js:2 \(line uncertain\) — Defects 95%:/);
 });
 
 test('an advise-tier finding prints the Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.6' });
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /^Check — open the line/m);
-  assert.match(text, /- a\.js:2 — defect 60%:/);
+  assert.match(text, /- a\.js:2 — Defects 60%:/);
   assert.equal(text.split('\n').at(-1), `No blockers — ${RULE_NAMES.length} to check. Open each line and change it only if the problem is real.`);
 });
 
@@ -336,7 +347,7 @@ test('no AGENTS files anywhere means only built-in questions are asked and the o
     const text = extractResult(stdout, 1).content[0].text;
     assert.match(text, /No findings — deliver\./);
     assert.doesNotMatch(text, /agents_/);
-    assert.doesNotMatch(text, /project rules/);
+    assert.doesNotMatch(text, /Project rules/);
     assert.deepEqual(extractExtractedFiles(stderr), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -370,6 +381,11 @@ test('explicit cwd loads project rules when the server starts outside a repo', a
     assert.equal(extractResult(stdout, 1).isError, undefined);
     assert.match(stderr, /REVIEWKEYS:.*agents_1/);
     assert.match(stderr, /REVIEWKEYS:.*local_rule/);
+    const table = extractResult(stdout, 1).content[0].text;
+    for (const label of ['Addresses task', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
+      assert.match(table, new RegExp(`│ ${label} +│`));
+    }
+    assert.doesNotMatch(table, /│ \w+_\w+/);
     for (const cwd of [undefined, path.join(outside, 'missing'), serverPath, 42]) {
       const result = await runServer([call(1, { task: 'A', cwd })], {}, outside);
       assert.equal(extractResult(result.stdout, 1).isError, undefined);
@@ -396,7 +412,7 @@ for (const [probability, mark] of [[0.549, '✓'], [0.55, '!'], [0.899, '!'], [0
   test(`table marks probability ${probability} with ${mark}`, async () => {
     const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: String(probability) });
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, new RegExp(`│ defect +│ ${Math.round(probability * 100)}% ${mark} +│`));
+    assert.match(text, new RegExp(`│ Defects +│ ${Math.round(probability * 100)}% ${mark} +│`));
   });
 }
 

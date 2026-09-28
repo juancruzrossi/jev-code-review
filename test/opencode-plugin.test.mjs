@@ -40,7 +40,7 @@ test('tool.execute.after appends the lint text for any tool after a file change'
 
     assert.match(output.output, /original output/);
     assert.match(output.output, /Jev after edit:/);
-    assert.match(output.output, /a\.js:2 — defect 90%/);
+    assert.match(output.output, /a\.js:2 — Defects 90%/);
   } finally {
     process.chdir(originalCwd);
     globalThis.fetch = originalFetch;

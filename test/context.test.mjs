@@ -60,7 +60,7 @@ test('a Bash payload after appending to a tracked file reports the right path:li
     );
     const message = JSON.parse(stdout);
     assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -82,7 +82,7 @@ test('a Codex apply_patch payload with tool_input.command reports the right path
     );
     const message = JSON.parse(stdout);
     assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -98,7 +98,7 @@ test('a PostToolUse Edit payload with a Fix-tier defect reports the right path:l
     );
     const message = JSON.parse(stdout);
     assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — defect 90%/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -113,7 +113,7 @@ test('a Fix-tier defect with a low line confidence flags the location as uncerta
       { JEV_STUB_PROB: '0.9', JEV_STUB_LINE_PROB: '0.3' }
     );
     const message = JSON.parse(stdout);
-    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 \(line uncertain\) — defect 90%/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 \(line uncertain\) — Defects 90%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
