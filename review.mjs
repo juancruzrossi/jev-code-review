@@ -23,7 +23,7 @@ export const LINE_CONFIDENCE = 0.4;
 export const RULES = [
   {
     name: 'addresses_task',
-    label: 'Addresses task',
+    label: 'Task not done',
     needsTask: true,
     locate: false,
     ask: "Does the change fail to do what the task asks?",

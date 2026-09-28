@@ -163,17 +163,18 @@ test('a clean review sends its task, reports round 1, renders a well-formed tabl
   assert.match(table[0], /^┌─+┐$/);
   assert.match(table[1], /^│\s+Jev Code Review\s+│$/);
   assert.match(table[2], /^├─+┬[─┬]*┤$/);
-  assert.match(table[3], /│\s+Rule\s+│/);
+  assert.match(table[3], /│\s+Risk\s+│\s+Chance\s+│/);
+  assert.match(table.at(-2), /^│\s+Lower is better\s+│$/);
   assert.equal(new Set(table.map((l) => [...l].length)).size, 1);
 
   const ruleProbs = { addresses_task: 0.549, unrelated_change: 0.55, missing_requirement: 0.899, defect: 0.9 };
   const { stdout: out } = await runServer([call(1, { task: 'A' })], { JEV_STUB_RULE_PROBS: JSON.stringify(ruleProbs) });
   const t = extractResult(out, 1).content[0].text;
   for (const [label, probability, mark] of [
-    ['Addresses task', 0.549, '✓'],
-    ['Unrelated changes', 0.55, '!'],
-    ['Missing requirements', 0.899, '!'],
-    ['Defects', 0.9, '✗']
+    ['Task not done', 0.549, '✓ low'],
+    ['Unrelated changes', 0.55, '! check'],
+    ['Missing requirements', 0.899, '! check'],
+    ['Defects', 0.9, '✗ high']
   ]) {
     assert.match(t, new RegExp(`│ ${label} +│ ${Math.round(probability * 100)}% ${mark} +│`));
   }
@@ -274,7 +275,7 @@ test('project rules: an api rule is reported with its text and source file, web 
     assert.match(stderr, /REVIEWKEYS:.*agents_1/);
     assert.match(stderr, /REVIEWKEYS:.*local_rule/);
     const table = extractResult(stdout, 1).content[0].text;
-    for (const label of ['Addresses task', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
+    for (const label of ['Task not done', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
       assert.match(table, new RegExp(`│ ${label} +│`));
     }
     assert.doesNotMatch(table, /│ \w+_\w+/);

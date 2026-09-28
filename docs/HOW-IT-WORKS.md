@@ -22,16 +22,18 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ## What a finding looks like
 
 ```
-┌──────────────────────────────┐
-│       Jev Code Review        │
-├──────────────────────┬───────┤
-│         Rule         │ Final │
-├──────────────────────┼───────┤
-│ Addresses task       │ 8% ✓  │
-│ Unrelated changes    │ 16% ✓ │
-│ Missing requirements │ 15% ✓ │
-│ Defects              │ 92% ✗ │
-└──────────────────────┴───────┘
+┌───────────────────────────────────┐
+│          Jev Code Review          │
+├──────────────────────┬────────────┤
+│         Risk         │   Chance   │
+├──────────────────────┼────────────┤
+│ Task not done        │ 8% ✓ low   │
+│ Unrelated changes    │ 16% ✓ low  │
+│ Missing requirements │ 15% ✓ low  │
+│ Defects              │ 92% ✗ high │
+├──────────────────────┴────────────┤
+│          Lower is better          │
+└───────────────────────────────────┘
 
 Must resolve:
 - math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
@@ -46,13 +48,13 @@ Findings come in two tiers:
 
 When Jev is unsure about the exact line, the finding says `(line uncertain)`. The agent ends its answer with the table, so you see the result too.
 
-The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+Each percentage is the chance that the risk is real, so lower is better. The table marks `✓ low` below 55%, `! check` from 55% to below 90%, and `✗ high` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
 
 ## What it checks
 
-| Rule | Catches |
+| Risk | Catches |
 |---|---|
-| Addresses task | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
+| Task not done | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
 | Unrelated changes | Renames, reformatting, or rewrites of code your request did not need changed. |
 | Missing requirements | Something your request explicitly asked for that is not in the change. |
 | Defects | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |

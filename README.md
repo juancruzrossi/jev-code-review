@@ -12,16 +12,18 @@ Works with Claude Code, Codex, and OpenCode.
 4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌──────────────────────────────┐
-│       Jev Code Review        │
-├──────────────────────┬───────┤
-│         Rule         │ Final │
-├──────────────────────┼───────┤
-│ Addresses task       │ 8% ✓  │
-│ Unrelated changes    │ 16% ✓ │
-│ Missing requirements │ 15% ✓ │
-│ Defects              │ 92% ✗ │
-└──────────────────────┴───────┘
+┌───────────────────────────────────┐
+│          Jev Code Review          │
+├──────────────────────┬────────────┤
+│         Risk         │   Chance   │
+├──────────────────────┼────────────┤
+│ Task not done        │ 8% ✓ low   │
+│ Unrelated changes    │ 16% ✓ low  │
+│ Missing requirements │ 15% ✓ low  │
+│ Defects              │ 92% ✗ high │
+├──────────────────────┴────────────┤
+│          Lower is better          │
+└───────────────────────────────────┘
 
 Must resolve:
 - math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, ...
@@ -31,13 +33,13 @@ You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. T
 
 Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
-The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+Each percentage is the chance that the risk is real, so lower is better. The table marks `✓ low` below 55%, `! check` from 55% to below 90%, and `✗ high` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
 
 ## Built-in rules
 
-| Rule | Checks |
+| Risk | Checks |
 |---|---|
-| Addresses task | The change fails to do what the task asks, or breaks a stated constraint |
+| Task not done | The change fails to do what the task asks, or breaks a stated constraint |
 | Unrelated changes | A changed line does not trace to the task |
 | Missing requirements | Something the task asked for is missing |
 | Defects | An added line misbehaves for some real input |

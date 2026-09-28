@@ -32,19 +32,20 @@ function padLeftAlign(text, width) {
 }
 
 const TABLE_TITLE = 'Jev Code Review';
+const TABLE_FOOTER = 'Lower is better';
 
 function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
-  const headers = ['Rule', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), 'Final'];
+  const headers = ['Risk', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), rounds.length > 1 ? 'Final' : 'Chance'];
   const rows = tableFound.map(({ name, probability }, row) => [
     ruleLabel(name),
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
-    `${finals[row]}% ${probability < ADVISE_TIER ? '✓' : probability < BLOCK_TIER ? '!' : '✗'}`
+    `${finals[row]}% ${probability < ADVISE_TIER ? '✓ low' : probability < BLOCK_TIER ? '! check' : '✗ high'}`
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);
   const innerWidth = () => widths.reduce((sum, w) => sum + w, 0) + widths.length - 1;
-  widths[widths.length - 1] += Math.max(0, TABLE_TITLE.length + 2 - innerWidth());
+  widths[widths.length - 1] += Math.max(0, Math.max(TABLE_TITLE.length, TABLE_FOOTER.length) + 2 - innerWidth());
 
   const border = (left, mid, right) => left + widths.map((w) => '─'.repeat(w)).join(mid) + right;
   const headerLine = '│' + headers.map((h, i) => padCenter(h, widths[i])).join('│') + '│';
@@ -57,7 +58,9 @@ function renderTable(tableFound, rounds) {
     headerLine,
     border('├', '┼', '┤'),
     ...dataLines,
-    border('└', '┴', '┘')
+    border('├', '┴', '┤'),
+    '│' + padCenter(TABLE_FOOTER, innerWidth()) + '│',
+    '└' + '─'.repeat(innerWidth()) + '┘'
   ].join('\n');
 }
 
