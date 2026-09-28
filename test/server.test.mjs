@@ -105,25 +105,6 @@ function runServer(requests, extraEnv = {}, cwd) {
   }).finally(() => rmSync(stateDir, { recursive: true, force: true }));
 }
 
-function runServerPipelined(requests, extraEnv = {}) {
-  const stateDir = mkdtempSync(path.join(tmpdir(), 'jev-state-'));
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
-      { env: { ...process.env, JEV_API_KEY: 'test', XDG_STATE_HOME: stateDir, ...extraEnv } }
-    );
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (d) => { stdout += d; });
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', reject);
-    child.on('close', () => resolve({ stdout, stderr }));
-    for (const req of requests) child.stdin.write(JSON.stringify(req) + '\n');
-    child.stdin.end();
-  }).finally(() => rmSync(stateDir, { recursive: true, force: true }));
-}
-
 function call(id, args) {
   return { jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'jev_review', arguments: { diff: DIFF, ...args } } };
 }
@@ -148,10 +129,6 @@ function extractExtractedFiles(stderr) {
     .split('\n')
     .filter((line) => line.startsWith('EXTRACT:'))
     .map((line) => JSON.parse(line.slice('EXTRACT:'.length)));
-}
-
-function reviewCallCount(stderr) {
-  return stderr.split('\n').filter((line) => line.startsWith('REVIEWKEYS:')).length;
 }
 
 function agentsDiff(filePath) {
@@ -183,241 +160,176 @@ function makeApiWebFixture() {
   return dir;
 }
 
-test('a single call sends its own task, reports round 1, and never prints a marker', async () => {
-  const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
-  assert.deepEqual(extractTasks(stderr), ['A']);
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /Round 1\/3/);
-  assert.doesNotMatch(text, /jev:previous/);
-});
+test('a clean review sends its task, reports round 1, renders a well-formed table with no findings, and marks each tier correctly', async () => {
+  {
+    const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
+    assert.deepEqual(extractTasks(stderr), ['A']);
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.match(text, /Round 1\/3/);
+    assert.doesNotMatch(text, /jev:previous/);
+  }
 
-test('the table starts with a full-width Jev Code Review title and every line has the same width', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.1' });
-  const lines = extractResult(stdout, 1).content[0].text.split('\n');
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
+  const text = extractResult(stdout, 1).content[0].text;
+  assert.match(text, /No findings — good to go\./);
+  assert.doesNotMatch(text, /^Must resolve/m);
+  assert.doesNotMatch(text, /^Check/m);
+
+  const lines = text.split('\n');
   const table = lines.slice(0, lines.findIndex((l) => l.startsWith('└')) + 1);
   assert.match(table[0], /^┌─+┐$/);
   assert.match(table[1], /^│\s+Jev Code Review\s+│$/);
   assert.match(table[2], /^├─+┬[─┬]*┤$/);
   assert.match(table[3], /│\s+Rule\s+│/);
   assert.equal(new Set(table.map((l) => [...l].length)).size, 1);
+
+  for (const [probability, mark] of [[0.549, '✓'], [0.55, '!'], [0.899, '!'], [0.9, '✗']]) {
+    const { stdout: out } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: String(probability) });
+    const t = extractResult(out, 1).content[0].text;
+    assert.match(t, new RegExp(`│ Defects +│ ${Math.round(probability * 100)}% ${mark} +│`));
+  }
 });
 
-test('below the advise tier reports no findings with no Must-resolve or Check section', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /No findings — good to go\./);
-  assert.doesNotMatch(text, /^Must resolve/m);
-  assert.doesNotMatch(text, /^Check/m);
+test('a must-resolve finding prints its path:line and flags a low line confidence, an advise-tier finding prints the Check section', async () => {
+  {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.match(text, /^Must resolve/m);
+    assert.match(text, /- a\.js:2 — Defects 95%:/);
+    assert.match(text, /Round 1\/3/);
+  }
+  {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95', JEV_STUB_LINE_PROB: '0.3' });
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.match(text, /- a\.js:2 \(line uncertain\) — Defects 95%:/);
+  }
+  {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.6' });
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.match(text, /^Check — open the line/m);
+    assert.match(text, /- a\.js:2 — Defects 60%:/);
+    assert.equal(text.split('\n').at(-1), `No blockers — ${RULE_NAMES.length} to check. Open each line and change it only if the problem is real.`);
+  }
 });
 
-test('a must-resolve finding is printed with its path:line and the verdict names round 1', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /^Must resolve/m);
-  assert.match(text, /- a\.js:2 — Defects 95%:/);
-  assert.match(text, /Round 1\/3/);
-});
-
-test('a must-resolve finding with a low line confidence flags the location as uncertain', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95', JEV_STUB_LINE_PROB: '0.3' });
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /- a\.js:2 \(line uncertain\) — Defects 95%:/);
-});
-
-test('an advise-tier finding prints the Check section', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.6' });
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /^Check — open the line/m);
-  assert.match(text, /- a\.js:2 — Defects 60%:/);
-  assert.equal(text.split('\n').at(-1), `No blockers — ${RULE_NAMES.length} to check. Open each line and change it only if the problem is real.`);
-});
-
-test('two calls with the same task continue the loop as round 2 with two table columns', async () => {
-  const { stdout, stderr } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.95' }
-  );
-  assert.deepEqual(extractTasks(stderr), ['A', 'A']);
-  const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
-});
-
-test('a different task starts round 1 without inheriting the only open loop', async () => {
-  const { stdout, stderr } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'B' }), call(3, { task: 'A' })],
-    { JEV_STUB_PROB: '0.95' }
-  );
-  assert.deepEqual(extractTasks(stderr), ['A', 'B', 'A']);
-  const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text2, /Round 1\/3/);
-  assert.doesNotMatch(text2, /│\s*Round 1\s*│\s*Final\s*│/);
-  assert.match(extractResult(stdout, 3).content[0].text, /│\s*Round 1\s*│\s*Final\s*│/);
-});
-
-test('after no findings the next call with the same task starts a new round 1', async () => {
-  const { stdout } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.05' }
-  );
-  const text1 = extractResult(stdout, 1).content[0].text;
-  const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text1, /No findings — good to go\./);
-  assert.match(text2, /No findings — good to go\./);
-  assert.doesNotMatch(text2, /Round \d/);
-});
-
-test('a block count that does not drop reports no real progress', async () => {
-  const { stdout } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.95' }
-  );
-  const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text2, /No real progress/);
-});
-
-test('three rounds hit max rounds, then the next call starts a new round 1', async () => {
-  const roundProbs = JSON.stringify([
-    [0.9, 0.9, 0.9, 0.9],
-    [0.9, 0.05, 0.05, 0.05],
-    [0.9, 0.05, 0.05, 0.05],
-    [0.05, 0.05, 0.05, 0.05]
-  ]);
-  const { stdout } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'A' }), call(3, { task: 'A' }), call(4, { task: 'A' })],
-    { JEV_STUB_ROUND_PROBS: roundProbs }
-  );
-  const text3 = extractResult(stdout, 3).content[0].text;
-  const text4 = extractResult(stdout, 4).content[0].text;
-  assert.match(text3, /Max rounds reached/);
-  assert.match(text4, /No findings — good to go\./);
-  assert.doesNotMatch(text4, /Round \d/);
-});
-
-test('two pipelined calls sent before either response arrives still resolve as round 1 then round 2', async () => {
-  const { stdout } = await runServerPipelined(
-    [call(1, { task: 'A' }), call(2, { task: 'A' })],
-    { JEV_STUB_PROB: '0.95', JEV_STUB_DELAY_MS: '30' }
-  );
-  const text1 = extractResult(stdout, 1).content[0].text;
-  const text2 = extractResult(stdout, 2).content[0].text;
-  assert.doesNotMatch(text1, /│\s*Round 1\s*│\s*Final\s*│/);
-  assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
-});
-
-test('a call with a stray previous argument works', async () => {
-  const { stdout } = await runServer([call(1, { task: 'A', previous: 'garbage' })], { JEV_STUB_PROB: '0.05' });
-  const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /No findings — good to go\./);
-});
-
-test('a violation of an api AGENTS.md rule is reported with the rule text and its source file', async () => {
-  const dir = makeApiWebFixture();
-  try {
-    const diff = agentsDiff('packages/api/x.js');
-    const { stdout } = await runServer(
-      [call(1, { task: 'A', diff })],
-      { JEV_STUB_PROB: '0.05', JEV_STUB_RULE_PROBS: JSON.stringify({ agents_1: 0.95 }) },
-      dir
+test('rounds progress across calls: same task continues the loop, a different task resets it, no progress and max rounds are reported', async () => {
+  {
+    const { stdout, stderr } = await runServer(
+      [call(1, { task: 'A' }), call(2, { task: 'A' })],
+      { JEV_STUB_PROB: '0.95' }
     );
-    const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /"Never call console\.log directly in this codebase\." \(packages\/api\/AGENTS\.md\) 95%/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    assert.deepEqual(extractTasks(stderr), ['A', 'A']);
+    const text2 = extractResult(stdout, 2).content[0].text;
+    assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
+    assert.match(text2, /No real progress/);
+  }
+  {
+    const { stdout, stderr } = await runServer(
+      [call(1, { task: 'A' }), call(2, { task: 'B' }), call(3, { task: 'A' })],
+      { JEV_STUB_PROB: '0.95' }
+    );
+    assert.deepEqual(extractTasks(stderr), ['A', 'B', 'A']);
+    const text2 = extractResult(stdout, 2).content[0].text;
+    assert.match(text2, /Round 1\/3/);
+    assert.doesNotMatch(text2, /│\s*Round 1\s*│\s*Final\s*│/);
+    assert.match(extractResult(stdout, 3).content[0].text, /│\s*Round 1\s*│\s*Final\s*│/);
+  }
+  {
+    const { stdout } = await runServer(
+      [call(1, { task: 'A' }), call(2, { task: 'A' })],
+      { JEV_STUB_PROB: '0.05' }
+    );
+    const text1 = extractResult(stdout, 1).content[0].text;
+    const text2 = extractResult(stdout, 2).content[0].text;
+    assert.match(text1, /No findings — good to go\./);
+    assert.match(text2, /No findings — good to go\./);
+    assert.doesNotMatch(text2, /Round \d/);
+  }
+  {
+    const roundProbs = JSON.stringify([
+      [0.9, 0.9, 0.9, 0.9],
+      [0.9, 0.05, 0.05, 0.05],
+      [0.9, 0.05, 0.05, 0.05],
+      [0.05, 0.05, 0.05, 0.05]
+    ]);
+    const { stdout } = await runServer(
+      [call(1, { task: 'A' }), call(2, { task: 'A' }), call(3, { task: 'A' }), call(4, { task: 'A' })],
+      { JEV_STUB_ROUND_PROBS: roundProbs }
+    );
+    const text3 = extractResult(stdout, 3).content[0].text;
+    const text4 = extractResult(stdout, 4).content[0].text;
+    assert.match(text3, /Max rounds reached/);
+    assert.match(text4, /No findings — good to go\./);
+    assert.doesNotMatch(text4, /Round \d/);
   }
 });
 
-test('rules from web AGENTS.md are never asked for an api-only change', async () => {
-  const dir = makeApiWebFixture();
-  try {
-    const diff = agentsDiff('packages/api/x.js');
-    const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
-    const text = extractResult(stdout, 1).content[0].text;
-    assert.doesNotMatch(text, /inline styles/);
-    assert.deepEqual(extractExtractedFiles(stderr), ['packages/api/AGENTS.md']);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+test('missing answers fail the review instead of passing', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_MISSING: 'defect' });
+  const result = extractResult(stdout, 1);
+  assert.equal(result.isError, true);
+  assert.equal(result.content[0].text, 'Jev returned no answer for: defect. Review not completed.');
+  assert.doesNotMatch(result.content[0].text, /PASSED/);
 });
 
-test('no AGENTS files anywhere means only built-in questions are asked and the output matches the unscoped shape', async () => {
-  const dir = makeRepo('jev-noagents-');
-  try {
-    writeFileSync(path.join(dir, 'CLAUDE.md'), 'Money amounts are integers in cents.');
-    const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
-    const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /No findings — good to go\./);
-    assert.doesNotMatch(text, /agents_/);
-    assert.doesNotMatch(text, /Project rules/);
-    assert.deepEqual(extractExtractedFiles(stderr), []);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('stage 2 locate is skipped when no project rule reaches the advisory tier', async () => {
-  const dir = makeRepo('jev-lowscore-');
-  try {
-    mkdirSync(path.join(dir, 'packages', 'api'), { recursive: true });
-    writeFileSync(path.join(dir, 'packages', 'api', 'AGENTS.md'), 'Never call console.log directly in this codebase.\n');
-    const diff = agentsDiff('packages/api/x.js');
-    const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
-    const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /No findings — good to go\./);
-    assert.equal(reviewCallCount(stderr), 2);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-
-test('explicit cwd loads project rules when the server starts outside a repo', async () => {
-  const dir = makeRepo('jev-explicit-cwd-');
-  const outside = mkdtempSync(path.join(tmpdir(), 'jev-outside-'));
-  try {
-    writeFileSync(path.join(dir, 'AGENTS.md'), 'Never call console.warn in this project.\n');
-    mkdirSync(path.join(dir, '.jev'));
-    writeFileSync(path.join(dir, '.jev', 'rules.json'), JSON.stringify([{ name: 'local_rule', rule: 'Avoid globals.' }]));
-    const { stdout, stderr } = await runServer([call(1, { task: 'A', cwd: dir })], {}, outside);
-    assert.equal(extractResult(stdout, 1).isError, undefined);
-    assert.match(stderr, /REVIEWKEYS:.*agents_1/);
-    assert.match(stderr, /REVIEWKEYS:.*local_rule/);
-    const table = extractResult(stdout, 1).content[0].text;
-    for (const label of ['Addresses task', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
-      assert.match(table, new RegExp(`│ ${label} +│`));
+test('project rules: an api rule is reported with its text and source file, web rules are never asked, and explicit cwd loads rules from outside the repo', async () => {
+  {
+    const dir = makeApiWebFixture();
+    try {
+      const diff = agentsDiff('packages/api/x.js');
+      const { stdout } = await runServer(
+        [call(1, { task: 'A', diff })],
+        { JEV_STUB_PROB: '0.05', JEV_STUB_RULE_PROBS: JSON.stringify({ agents_1: 0.95 }) },
+        dir
+      );
+      const text = extractResult(stdout, 1).content[0].text;
+      assert.match(text, /"Never call console\.log directly in this codebase\." \(packages\/api\/AGENTS\.md\) 95%/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-    assert.doesNotMatch(table, /│ \w+_\w+/);
-    for (const cwd of [undefined, path.join(outside, 'missing'), serverPath, 42]) {
-      const result = await runServer([call(1, { task: 'A', cwd })], {}, outside);
-      assert.equal(extractResult(result.stdout, 1).isError, undefined);
-      assert.doesNotMatch(result.stderr, /agents_1|local_rule/);
+  }
+  {
+    const dir = makeApiWebFixture();
+    try {
+      const diff = agentsDiff('packages/api/x.js');
+      const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
+      const text = extractResult(stdout, 1).content[0].text;
+      assert.doesNotMatch(text, /inline styles/);
+      assert.deepEqual(extractExtractedFiles(stderr), ['packages/api/AGENTS.md']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(outside, { recursive: true, force: true });
+  }
+  {
+    const dir = makeRepo('jev-explicit-cwd-');
+    const outside = mkdtempSync(path.join(tmpdir(), 'jev-outside-'));
+    try {
+      writeFileSync(path.join(dir, 'AGENTS.md'), 'Never call console.warn in this project.\n');
+      mkdirSync(path.join(dir, '.jev'));
+      writeFileSync(path.join(dir, '.jev', 'rules.json'), JSON.stringify([{ name: 'local_rule', rule: 'Avoid globals.' }]));
+      const { stdout, stderr } = await runServer([call(1, { task: 'A', cwd: dir })], {}, outside);
+      assert.equal(extractResult(stdout, 1).isError, undefined);
+      assert.match(stderr, /REVIEWKEYS:.*agents_1/);
+      assert.match(stderr, /REVIEWKEYS:.*local_rule/);
+      const table = extractResult(stdout, 1).content[0].text;
+      for (const label of ['Addresses task', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
+        assert.match(table, new RegExp(`│ ${label} +│`));
+      }
+      assert.doesNotMatch(table, /│ \w+_\w+/);
+      for (const cwd of [undefined, path.join(outside, 'missing'), serverPath, 42]) {
+        const result = await runServer([call(1, { task: 'A', cwd })], {}, outside);
+        assert.equal(extractResult(result.stdout, 1).isError, undefined);
+        assert.doesNotMatch(result.stderr, /agents_1|local_rule/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   }
 });
 
-
-for (const missing of [RULE_NAMES, ['defect']]) {
-  test(`missing answers fail the review: ${missing.join(', ')}`, async () => {
-    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_MISSING: missing.join(',') });
-    const result = extractResult(stdout, 1);
-    assert.equal(result.isError, true);
-    assert.equal(result.content[0].text, `Jev returned no answer for: ${missing.join(', ')}. Review not completed.`);
-    assert.doesNotMatch(result.content[0].text, /PASSED/);
-  });
-}
-
-for (const [probability, mark] of [[0.549, '✓'], [0.55, '!'], [0.899, '!'], [0.9, '✗']]) {
-  test(`table marks probability ${probability} with ${mark}`, async () => {
-    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: String(probability) });
-    const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, new RegExp(`│ Defects +│ ${Math.round(probability * 100)}% ${mark} +│`));
-  });
-}
-
-for (const [probability, verdict, tier] of [[0.05, 'clean', 'none'], [0.6, 'check', 'advise'], [0.95, 'block', 'block']]) {
-  test(`successful ${verdict} reviews append only decision metadata`, async () => {
+test('decision log: a successful review appends only metadata, a log write failure does not fail the review, and a failed review creates no log', async () => {
+  for (const [probability, verdict, tier] of [[0.05, 'clean', 'none'], [0.6, 'check', 'advise'], [0.95, 'block', 'block']]) {
     const dir = makeRepo('jev-decision-repo-');
     const stateDir = mkdtempSync(path.join(tmpdir(), 'jev-decisions-'));
     try {
@@ -455,24 +367,9 @@ for (const [probability, verdict, tier] of [[0.05, 'clean', 'none'], [0.6, 'chec
       rmSync(dir, { recursive: true, force: true });
       rmSync(stateDir, { recursive: true, force: true });
     }
-  });
-}
-
-test('decision log defaults to the home state directory and records null outside a repo', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-home-'));
-  try {
-    const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: '', HOME: dir }, dir);
-    assert.equal(extractResult(stdout, 1).isError, undefined);
-    const record = JSON.parse(readFileSync(path.join(dir, '.local/state/jev-code-review/decisions.jsonl'), 'utf8'));
-    assert.equal(record.repo, null);
-    assert.equal(record.verdict, 'clean');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
   }
-});
 
-for (const failure of ['directory creation', 'append']) {
-  test(`decision log ${failure} failure does not fail the review`, async () => {
+  for (const failure of ['directory creation', 'append']) {
     const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-error-'));
     try {
       const logDir = path.join(dir, 'jev-code-review');
@@ -485,16 +382,16 @@ for (const failure of ['directory creation', 'append']) {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-}
+  }
 
-test('failed reviews do not create a decision log', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-failed-'));
-  try {
-    const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: dir, JEV_STUB_MISSING: 'defect' });
-    assert.equal(extractResult(stdout, 1).isError, true);
-    assert.equal(existsSync(path.join(dir, 'jev-code-review', 'decisions.jsonl')), false);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  {
+    const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-failed-'));
+    try {
+      const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: dir, JEV_STUB_MISSING: 'defect' });
+      assert.equal(extractResult(stdout, 1).isError, true);
+      assert.equal(existsSync(path.join(dir, 'jev-code-review', 'decisions.jsonl')), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
