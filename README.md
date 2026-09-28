@@ -30,6 +30,8 @@ You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. T
 
 Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
+The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — deliver.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+
 ## Built-in rules
 
 | Rule | Checks |

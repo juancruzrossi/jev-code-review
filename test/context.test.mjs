@@ -161,3 +161,10 @@ test('full context tells callers to always pass their working directory', () => 
   assert.match(FULL, /task, diff, cwd\?, files\?, context\?/);
   assert.match(FULL, /always pass `cwd` = the agent's current working directory/);
 });
+
+test('full context describes honest verdicts without promising correctness', () => {
+  assert.match(FULL, /No findings/);
+  assert.match(FULL, /No blockers/);
+  assert.match(FULL, /neither guarantees correctness/);
+  assert.doesNotMatch(FULL, /PASSED/);
+});

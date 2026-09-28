@@ -188,10 +188,10 @@ test('a single call sends its own task, reports round 1, and never prints a mark
   assert.doesNotMatch(text, /jev:previous/);
 });
 
-test('below the advise tier reports PASSED with no Must-resolve or Check section', async () => {
+test('below the advise tier reports no findings with no Must-resolve or Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /PASSED — deliver\./);
+  assert.match(text, /No findings — deliver\./);
   assert.doesNotMatch(text, /^Must resolve/m);
   assert.doesNotMatch(text, /^Check/m);
 });
@@ -215,6 +215,7 @@ test('an advise-tier finding prints the Check section', async () => {
   const text = extractResult(stdout, 1).content[0].text;
   assert.match(text, /^Check — open the line/m);
   assert.match(text, /- a\.js:2 — defect 60%:/);
+  assert.equal(text.split('\n').at(-1), `No blockers — ${RULE_NAMES.length} to check. Open each line and change it only if the problem is real.`);
 });
 
 test('two calls with the same task continue the loop as round 2 with two table columns', async () => {
@@ -237,15 +238,15 @@ test('a reworded task with exactly one open loop continues it', async () => {
   assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
 });
 
-test('after PASSED the next call with the same task starts a new round 1', async () => {
+test('after no findings the next call with the same task starts a new round 1', async () => {
   const { stdout } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A' })],
     { JEV_STUB_PROB: '0.05' }
   );
   const text1 = extractResult(stdout, 1).content[0].text;
   const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text1, /PASSED — deliver\./);
-  assert.match(text2, /PASSED — deliver\./);
+  assert.match(text1, /No findings — deliver\./);
+  assert.match(text2, /No findings — deliver\./);
   assert.doesNotMatch(text2, /Round \d/);
 });
 
@@ -272,7 +273,7 @@ test('three rounds hit max rounds, then the next call starts a new round 1', asy
   const text3 = extractResult(stdout, 3).content[0].text;
   const text4 = extractResult(stdout, 4).content[0].text;
   assert.match(text3, /Max rounds reached/);
-  assert.match(text4, /PASSED — deliver\./);
+  assert.match(text4, /No findings — deliver\./);
   assert.doesNotMatch(text4, /Round \d/);
 });
 
@@ -290,7 +291,7 @@ test('two pipelined calls sent before either response arrives still resolve as r
 test('a call with a stray previous argument works', async () => {
   const { stdout } = await runServer([call(1, { task: 'A', previous: 'garbage' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /PASSED — deliver\./);
+  assert.match(text, /No findings — deliver\./);
 });
 
 test('a violation of an api AGENTS.md rule is reported with the rule text and its source file', async () => {
@@ -328,7 +329,7 @@ test('no AGENTS files anywhere means only built-in questions are asked and the o
     writeFileSync(path.join(dir, 'CLAUDE.md'), 'Money amounts are integers in cents.');
     const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /PASSED — deliver\./);
+    assert.match(text, /No findings — deliver\./);
     assert.doesNotMatch(text, /agents_/);
     assert.doesNotMatch(text, /project rules/);
     assert.deepEqual(extractExtractedFiles(stderr), []);
@@ -345,7 +346,7 @@ test('stage 2 locate is skipped when no project rule reaches the advisory tier',
     const diff = agentsDiff('packages/api/x.js');
     const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /PASSED — deliver\./);
+    assert.match(text, /No findings — deliver\./);
     assert.equal(reviewCallCount(stderr), 2);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -383,5 +384,13 @@ for (const missing of [RULE_NAMES, ['defect']]) {
     assert.equal(result.isError, true);
     assert.equal(result.content[0].text, `Jev returned no answer for: ${missing.join(', ')}. Review not completed.`);
     assert.doesNotMatch(result.content[0].text, /PASSED/);
+  });
+}
+
+for (const [probability, mark] of [[0.549, '✓'], [0.55, '!'], [0.899, '!'], [0.9, '✗']]) {
+  test(`table marks probability ${probability} with ${mark}`, async () => {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: String(probability) });
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.match(text, new RegExp(`│ defect +│ ${Math.round(probability * 100)}% ${mark} +│`));
   });
 }
