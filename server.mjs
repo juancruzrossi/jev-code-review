@@ -17,7 +17,6 @@ const openLoops = new Map();
 
 function findLoop(task) {
   if (openLoops.has(task)) return openLoops.get(task);
-  if (openLoops.size === 1) return [...openLoops.values()][0];
   return null;
 }
 

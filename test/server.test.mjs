@@ -228,14 +228,16 @@ test('two calls with the same task continue the loop as round 2 with two table c
   assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
 });
 
-test('a reworded task with exactly one open loop continues it', async () => {
+test('a different task starts round 1 without inheriting the only open loop', async () => {
   const { stdout, stderr } = await runServer(
-    [call(1, { task: 'A' }), call(2, { task: 'A, but rephrased' })],
+    [call(1, { task: 'A' }), call(2, { task: 'B' }), call(3, { task: 'A' })],
     { JEV_STUB_PROB: '0.95' }
   );
-  assert.deepEqual(extractTasks(stderr), ['A', 'A']);
+  assert.deepEqual(extractTasks(stderr), ['A', 'B', 'A']);
   const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text2, /│\s*Round 1\s*│\s*Final\s*│/);
+  assert.match(text2, /Round 1\/3/);
+  assert.doesNotMatch(text2, /│\s*Round 1\s*│\s*Final\s*│/);
+  assert.match(extractResult(stdout, 3).content[0].text, /│\s*Round 1\s*│\s*Final\s*│/);
 });
 
 test('after no findings the next call with the same task starts a new round 1', async () => {
