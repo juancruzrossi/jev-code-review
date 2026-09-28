@@ -54,6 +54,10 @@ Jev also checks a change against your project's own conventions:
 
 Each entry becomes a rule Jev checks and locates the same way as the built-in ones.
 
+## Local decision log
+
+Each successful review appends a JSON line to `$XDG_STATE_HOME/jev-code-review/decisions.jsonl` (default: `~/.local/state/jev-code-review/decisions.jsonl`). It records the timestamp, repository folder name, round, verdict, and each rule's name, probability, tier, file and line. It contains no code, diff, task or rule text, and never leaves your machine. A log write failure does not fail the review.
+
 ## Requirements
 
 - Node.js

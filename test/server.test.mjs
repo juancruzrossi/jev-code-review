@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,11 +69,12 @@ globalThis.fetch = async (url, opts) => {
 `;
 
 function runServer(requests, extraEnv = {}, cwd) {
+  const stateDir = mkdtempSync(path.join(tmpdir(), 'jev-state-'));
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
       ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
-      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv }, ...(cwd ? { cwd } : {}) }
+      { env: { ...process.env, JEV_API_KEY: 'test', XDG_STATE_HOME: stateDir, ...extraEnv }, ...(cwd ? { cwd } : {}) }
     );
     let stdout = '';
     let stderr = '';
@@ -100,15 +101,16 @@ function runServer(requests, extraEnv = {}, cwd) {
       child.stdin.write(JSON.stringify(req) + '\n');
     };
     sendNext();
-  });
+  }).finally(() => rmSync(stateDir, { recursive: true, force: true }));
 }
 
 function runServerPipelined(requests, extraEnv = {}) {
+  const stateDir = mkdtempSync(path.join(tmpdir(), 'jev-state-'));
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
       ['--import', `data:text/javascript,${encodeURIComponent(FETCH_STUB)}`, serverPath],
-      { env: { ...process.env, JEV_API_KEY: 'test', ...extraEnv } }
+      { env: { ...process.env, JEV_API_KEY: 'test', XDG_STATE_HOME: stateDir, ...extraEnv } }
     );
     let stdout = '';
     let stderr = '';
@@ -118,7 +120,7 @@ function runServerPipelined(requests, extraEnv = {}) {
     child.on('close', () => resolve({ stdout, stderr }));
     for (const req of requests) child.stdin.write(JSON.stringify(req) + '\n');
     child.stdin.end();
-  });
+  }).finally(() => rmSync(stateDir, { recursive: true, force: true }));
 }
 
 function call(id, args) {
@@ -396,3 +398,86 @@ for (const [probability, mark] of [[0.549, '✓'], [0.55, '!'], [0.899, '!'], [0
     assert.match(text, new RegExp(`│ defect +│ ${Math.round(probability * 100)}% ${mark} +│`));
   });
 }
+
+for (const [probability, verdict, tier] of [[0.05, 'clean', 'none'], [0.6, 'check', 'advise'], [0.95, 'block', 'block']]) {
+  test(`successful ${verdict} reviews append only decision metadata`, async () => {
+    const dir = makeRepo('jev-decision-repo-');
+    const stateDir = mkdtempSync(path.join(tmpdir(), 'jev-decisions-'));
+    try {
+      writeFileSync(path.join(dir, 'AGENTS.md'), 'Never log private customer records.\n');
+      const { stdout } = await runServer(
+        [call(1, { task: 'PRIVATE_TASK', cwd: dir }), call(2, { task: 'PRIVATE_TASK', cwd: dir })],
+        { XDG_STATE_HOME: stateDir, JEV_STUB_PROB: String(probability) }
+      );
+      assert.equal(extractResult(stdout, 1).isError, undefined);
+      assert.equal(extractResult(stdout, 2).isError, undefined);
+      const raw = readFileSync(path.join(stateDir, 'jev-code-review', 'decisions.jsonl'), 'utf8');
+      assert.ok(raw.endsWith('\n'));
+      const records = raw.trim().split('\n').map((line) => JSON.parse(line));
+      assert.equal(records.length, 2);
+      for (const [index, record] of records.entries()) {
+        assert.deepEqual(Object.keys(record).sort(), ['findings', 'repo', 'round', 'ts', 'verdict']);
+        assert.equal(new Date(record.ts).toISOString(), record.ts);
+        assert.equal(record.repo, path.basename(dir));
+        assert.equal(record.round, verdict === 'block' ? index + 1 : 1);
+        assert.equal(record.verdict, verdict);
+        assert.deepEqual(record.findings.map((f) => f.rule), [...RULE_NAMES, 'agents_1']);
+        for (const finding of record.findings) {
+          assert.deepEqual(Object.keys(finding).sort(), ['file', 'line', 'probability', 'rule', 'tier']);
+          assert.equal(finding.probability, probability);
+          assert.equal(finding.tier, tier);
+        }
+        assert.deepEqual(record.findings.find((f) => f.rule === 'defect'), {
+          rule: 'defect', probability, tier, file: 'a.js', line: 2
+        });
+        assert.equal(record.findings[0].file, null);
+        assert.equal(record.findings[0].line, null);
+      }
+      assert.doesNotMatch(raw, /PRIVATE_TASK|const b|Never log private|violation|ruleText|"task"|"diff"/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('decision log defaults to the home state directory and records null outside a repo', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-home-'));
+  try {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: '', HOME: dir }, dir);
+    assert.equal(extractResult(stdout, 1).isError, undefined);
+    const record = JSON.parse(readFileSync(path.join(dir, '.local/state/jev-code-review/decisions.jsonl'), 'utf8'));
+    assert.equal(record.repo, null);
+    assert.equal(record.verdict, 'clean');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const failure of ['directory creation', 'append']) {
+  test(`decision log ${failure} failure does not fail the review`, async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-error-'));
+    try {
+      const logDir = path.join(dir, 'jev-code-review');
+      if (failure === 'directory creation') writeFileSync(logDir, 'not a directory');
+      else mkdirSync(path.join(logDir, 'decisions.jsonl'), { recursive: true });
+      const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: dir });
+      const result = extractResult(stdout, 1);
+      assert.equal(result.isError, undefined);
+      assert.match(result.content[0].text, /No findings — deliver\./);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('failed reviews do not create a decision log', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'jev-decision-failed-'));
+  try {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: dir, JEV_STUB_MISSING: 'defect' });
+    assert.equal(extractResult(stdout, 1).isError, true);
+    assert.equal(existsSync(path.join(dir, 'jev-code-review', 'decisions.jsonl')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

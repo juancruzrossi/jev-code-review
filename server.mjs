@@ -7,7 +7,9 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
-import { statSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
@@ -136,6 +138,20 @@ async function runReview(args) {
   const terminal = blockFindings.length === 0 || noProgress || round >= MAX_ROUNDS;
   if (terminal) openLoops.delete(pinnedTask);
   else openLoops.set(pinnedTask, { task: pinnedTask, rules: ruleNames, rounds });
+
+  try {
+    const dir = path.join(process.env.XDG_STATE_HOME || path.join(homedir(), '.local', 'state'), 'jev-code-review');
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(path.join(dir, 'decisions.jsonl'), JSON.stringify({
+      ts: new Date().toISOString(),
+      repo: root ? path.basename(root) : null,
+      round,
+      verdict: blockFindings.length > 0 ? 'block' : adviseFindings.length > 0 ? 'check' : 'clean',
+      findings: found.map((f) => ({
+        rule: f.name, probability: f.probability, tier: f.tier, file: f.where?.path ?? null, line: f.where?.line ?? null
+      }))
+    }) + '\n');
+  } catch {}
 
   return { content: [{ type: 'text', text: lines.join('\n') }] };
 }
