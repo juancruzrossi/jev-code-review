@@ -12,19 +12,19 @@ Works with Claude Code, Codex, and OpenCode.
 4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌─────────────────────────────┐
-│       Jev Code Review       │
-├─────────────────────┬───────┤
-│        Rule         │ Final │
-├─────────────────────┼───────┤
-│ addresses_task      │ 8% ✓  │
-│ unrelated_change    │ 16% ✓ │
-│ missing_requirement │ 15% ✓ │
-│ defect              │ 92% ✗ │
-└─────────────────────┴───────┘
+┌──────────────────────────────┐
+│       Jev Code Review        │
+├──────────────────────┬───────┤
+│         Rule         │ Final │
+├──────────────────────┼───────┤
+│ Addresses task       │ 8% ✓  │
+│ Unrelated changes    │ 16% ✓ │
+│ Missing requirements │ 15% ✓ │
+│ Defects              │ 92% ✗ │
+└──────────────────────┴───────┘
 
 Must resolve:
-- math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, ...
+- math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, ...
 ```
 
 You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. The agent does it on every code change.
@@ -37,10 +37,10 @@ The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or m
 
 | Rule | Checks |
 |---|---|
-| addresses_task | The change fails to do what the task asks, or breaks a stated constraint |
-| unrelated_change | A changed line does not trace to the task |
-| missing_requirement | Something the task asked for is missing |
-| defect | An added line misbehaves for some real input |
+| Addresses task | The change fails to do what the task asks, or breaks a stated constraint |
+| Unrelated changes | A changed line does not trace to the task |
+| Missing requirements | Something the task asked for is missing |
+| Defects | An added line misbehaves for some real input |
 
 ### Project rules
 

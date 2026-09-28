@@ -10,7 +10,7 @@ import readline from 'node:readline';
 import { appendFileSync, mkdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
+import { RULES, BLOCK_TIER, ADVISE_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, ruleLabel, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
 const DELIVER = 'deliver with your own judgment.';
@@ -37,7 +37,7 @@ function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
   const headers = ['Rule', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), 'Final'];
   const rows = tableFound.map(({ name, probability }, row) => [
-    name,
+    ruleLabel(name),
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
     `${finals[row]}% ${probability < ADVISE_TIER ? '✓' : probability < BLOCK_TIER ? '!' : '✗'}`
   ]);
@@ -108,7 +108,7 @@ async function runReview(args) {
   const projectFound = found.filter((f) => f.source !== undefined);
   const tableFound =
     projectFound.length > 0
-      ? [...nonProjectFound, { name: 'project rules', probability: Math.max(...projectFound.map((f) => f.probability)) }]
+      ? [...nonProjectFound, { name: 'project_rules', probability: Math.max(...projectFound.map((f) => f.probability)) }]
       : nonProjectFound;
   const ruleNames = tableFound.map((f) => f.name);
 

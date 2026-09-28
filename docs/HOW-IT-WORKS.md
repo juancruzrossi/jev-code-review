@@ -22,19 +22,19 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ## What a finding looks like
 
 ```
-┌─────────────────────────────┐
-│       Jev Code Review       │
-├─────────────────────┬───────┤
-│        Rule         │ Final │
-├─────────────────────┼───────┤
-│ addresses_task      │ 8% ✓  │
-│ unrelated_change    │ 16% ✓ │
-│ missing_requirement │ 15% ✓ │
-│ defect              │ 92% ✗ │
-└─────────────────────┴───────┘
+┌──────────────────────────────┐
+│       Jev Code Review        │
+├──────────────────────┬───────┤
+│         Rule         │ Final │
+├──────────────────────┼───────┤
+│ Addresses task       │ 8% ✓  │
+│ Unrelated changes    │ 16% ✓ │
+│ Missing requirements │ 15% ✓ │
+│ Defects              │ 92% ✗ │
+└──────────────────────┴───────┘
 
 Must resolve:
-- math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
+- math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
 ```
 
 Findings come in two tiers:
@@ -52,10 +52,10 @@ The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or m
 
 | Rule | Catches |
 |---|---|
-| `addresses_task` | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
-| `unrelated_change` | Renames, reformatting, or rewrites of code your request did not need changed. |
-| `missing_requirement` | Something your request explicitly asked for that is not in the change. |
-| `defect` | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
+| Addresses task | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
+| Unrelated changes | Renames, reformatting, or rewrites of code your request did not need changed. |
+| Missing requirements | Something your request explicitly asked for that is not in the change. |
+| Defects | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
 
 You can add rules for your own project, such as "money amounts are integers in cents, never floats". See [Project rules](../README.md#project-rules).
 
