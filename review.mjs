@@ -70,6 +70,16 @@ export const RULES = [
 
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
+function decodeGitPath(value) {
+  if (!value.startsWith('"')) return value;
+  const escapes = { a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' };
+  return Buffer.concat([...value.slice(1, -1).matchAll(/\\([0-7]{1,3}|.)|([^\\]+)/gs)].map(([, escape, literal]) => {
+    if (literal) return Buffer.from(literal);
+    if (/^[0-7]{1,3}$/.test(escape)) return Buffer.from([parseInt(escape, 8)]);
+    return Buffer.from(escapes[escape] ?? escape);
+  })).toString('utf8');
+}
+
 export function tagDiff(diff) {
   const lines = new Map();
   const out = [];
@@ -78,9 +88,9 @@ export function tagDiff(diff) {
   let counter = 0;
 
   for (const rawLine of diff.split('\n')) {
-    const fileMatch = /^\+\+\+ b\/(.+)$/.exec(rawLine);
+    const fileMatch = /^\+\+\+ (b\/.+|".+")$/.exec(rawLine);
     if (fileMatch) {
-      currentPath = fileMatch[1];
+      currentPath = decodeGitPath(fileMatch[1]).slice(2);
       out.push(rawLine);
       continue;
     }
@@ -636,12 +646,16 @@ async function gitDiffForFiles(cwd, files) {
 export async function changedFiles(cwd) {
   try {
     const [tracked, untracked] = await Promise.all([
-      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '--relative', 'HEAD']),
-      execFileAsync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'])
+      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '-z', '--relative', 'HEAD']),
+      execFileAsync('git', ['-C', cwd, 'ls-files', '-z', '--others', '--exclude-standard'])
     ]);
     const files = new Set();
-    for (const line of tracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
-    for (const line of untracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    for (const file of tracked.stdout.split('\0')) if (file) files.add(file);
+    for (const file of untracked.stdout.split('\0')) {
+      if (!file || /(^|\/)\.git(\/|$)/.test(file)) continue;
+      if (/^(?:\.env(?:\..*)?|.*\.(?:pem|key)|id_rsa.*)$/.test(path.basename(file))) continue;
+      files.add(file);
+    }
     return [...files];
   } catch {
     return [];
@@ -674,23 +688,21 @@ export async function filesToLint({ cwd, sessionId }) {
   const statePath = stateFilePath(cwd, sessionId);
   const state = readState(statePath);
   const toLint = [];
-  const nextState = { ...state };
   for (const file of changed) {
     const hash = hashFile(cwd, file);
     if (!(file in state) || state[file] !== hash) toLint.push(file);
-    nextState[file] = hash;
-  }
-  try {
-    writeFileSync(statePath, JSON.stringify(nextState));
-  } catch {
-    // ignore: the next call falls back to an empty state
   }
   return toLint;
 }
 
 export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch }) {
   try {
-    return await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+    const result = await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+    if (!result) return '';
+    try {
+      writeFileSync(result.statePath, JSON.stringify(result.nextState));
+    } catch {}
+    return result.text;
   } catch {
     return '';
   }
@@ -699,6 +711,10 @@ export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch 
 async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const files = await filesToLint({ cwd, sessionId });
   if (files.length === 0) return '';
+
+  const statePath = stateFilePath(cwd, sessionId);
+  const nextState = { ...readState(statePath) };
+  for (const file of files) nextState[file] = hashFile(cwd, file);
 
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
@@ -711,10 +727,10 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const state = { task: '' };
   const results = await askInStages({ apiKey, state, rules, tagged, fetchImpl });
   const blockFindings = findings(results, rules, tagged).filter((f) => f.tier === 'block');
-  if (blockFindings.length === 0) return '';
+  if (blockFindings.length === 0) return { text: '', statePath, nextState };
 
   const lines = ['Jev after edit:'];
   for (const f of blockFindings) lines.push(findingLine(f));
   lines.push('Check these lines now.');
-  return lines.join('\n');
+  return { text: lines.join('\n'), statePath, nextState };
 }

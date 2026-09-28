@@ -590,7 +590,7 @@ test('changedFiles returns paths relative to cwd, for both a modified tracked fi
   }
 });
 
-test('filesToLint returns changed files once, then only re-edited files, per session', async () => {
+test('filesToLint returns files until a successful review, then only re-edits, per session', async () => {
   const dir = makeRepo('jev-tolint-');
   try {
     writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
@@ -599,6 +599,8 @@ test('filesToLint returns changed files once, then only re-edited files, per ses
     const first = await filesToLint({ cwd: dir, sessionId: 's1' });
     assert.deepEqual(new Set(first), new Set(['a.js', 'b.js']));
 
+    assert.deepEqual(new Set(await filesToLint({ cwd: dir, sessionId: 's1' })), new Set(first));
+    await lintAfterEdit({ cwd: dir, sessionId: 's1', apiKey: 'k', fetchImpl: async () => ({ ok: true, json: async () => ({ answers: { defect: { noul: 0 } } }) }) });
     const second = await filesToLint({ cwd: dir, sessionId: 's1' });
     assert.deepEqual(second, []);
 
@@ -687,4 +689,75 @@ test('project locations are chunked and keep the highest-confidence location', a
   });
   assert.deepEqual(widths, [255, 5]);
   assert.deepEqual(findings(results, [rule], tagged)[0].where, { path: 'big.js', line: 256 });
+});
+
+
+test('per-edit requests exclude untracked secret names while retaining tracked files', async () => {
+  const dir = makeRepo('jev-secrets-');
+  try {
+    writeFileSync(path.join(dir, '.env.tracked'), 'tracked before\n');
+    execFileSync('git', ['-C', dir, 'add', '.env.tracked']);
+    execFileSync('git', ['-C', dir, 'commit', '-qm', 'track fixture']);
+    writeFileSync(path.join(dir, '.env.tracked'), 'tracked after\n');
+    mkdirSync(path.join(dir, 'nested'));
+    for (const name of ['.env', '.env.local', 'cert.pem', 'private.key', 'id_rsa', 'id_rsa.pub', 'café.pem', 'tab\t.key']) {
+      writeFileSync(path.join(dir, name), 'SYNTHETIC_SECRET\n');
+      writeFileSync(path.join(dir, 'nested', name), 'SYNTHETIC_SECRET\n');
+    }
+    writeFileSync(path.join(dir, 'safe.js'), 'const safe = 1;\n');
+    assert.deepEqual(new Set(await changedFiles(dir)), new Set(['.env.tracked', 'safe.js']));
+    const requests = [];
+    await lintAfterEdit({ cwd: dir, sessionId: 'secrets', apiKey: 'k', fetchImpl: async (_, opts) => {
+      requests.push(JSON.parse(opts.body));
+      return { ok: true, json: async () => ({ answers: { defect: { noul: 0 } } }) };
+    } });
+    assert.equal(requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(requests), /SYNTHETIC_SECRET/);
+    assert.match(requests[0].state.diff, /tracked after/);
+    assert.match(requests[0].state.diff, /const safe/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const failure of ['outage', 'missing']) {
+  test(`a ${failure} failure leaves the previous review state intact and retries`, async () => {
+    const dir = makeRepo('jev-retry-');
+    try {
+      writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+      let calls = 0;
+      const opts = { cwd: dir, sessionId: failure, apiKey: 'k', fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          if (failure === 'outage') throw new Error('outage');
+          return { ok: true, json: async () => ({ answers: {} }) };
+        }
+        return { ok: true, json: async () => ({ answers: { defect: { noul: 0.95 } } }) };
+      } };
+      assert.equal(await lintAfterEdit(opts), '');
+      assert.match(await lintAfterEdit(opts), /defect 95%/);
+      assert.equal(calls, 2);
+      assert.equal(await lintAfterEdit(opts), '');
+      assert.equal(calls, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('tagDiff decodes real Git quoted paths as UTF-8 and preserves escaped characters', () => {
+  const dir = makeRepo('jev-unicode-');
+  const names = ['café.js', 'quote"slash\\tab\t.js'];
+  try {
+    for (const name of names) writeFileSync(path.join(dir, name), 'const n = 1;\n');
+    execFileSync('git', ['-C', dir, 'add', '--', ...names]);
+    execFileSync('git', ['-C', dir, 'commit', '-qm', 'quoted paths']);
+    for (const name of names) writeFileSync(path.join(dir, name), 'const n = 2;\n');
+    const diff = execFileSync('git', ['-C', dir, '-c', 'core.quotePath=true', 'diff'], { encoding: 'utf8' });
+    const tagged = tagDiff(diff);
+    assert.deepEqual(new Set([...tagged.lines.values()].map((info) => info.path)), new Set(names));
+    assert.ok([...tagged.lines.values()].every((info) => info.line === 1));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
