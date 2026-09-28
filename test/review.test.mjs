@@ -628,3 +628,14 @@ test("lintAfterEdit returns '' and makes no fetch call when nothing changed", as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+test('findings rejects a missing answer in any response, including a partial chunk', () => {
+  const rule = RULES.find((r) => r.name === 'defect');
+  for (const noul of [undefined, '0', null, NaN, Infinity]) {
+    assert.throws(() => findings([
+      { response: { answers: { defect: { noul: 0 } } }, rules: [rule] },
+      { response: { answers: { defect: { noul } } }, rules: [rule] }
+    ], [rule], tagDiff(TWO_FILE_DIFF)), /Jev returned no answer for: defect. Review not completed./);
+  }
+});

@@ -63,6 +63,7 @@ globalThis.fetch = async (url, opts) => {
       answers[key] = { choice: pick, probabilities: { [pick]: lineProb } };
     }
   }
+  for (const name of (process.env.JEV_STUB_MISSING ?? '').split(',')) delete answers[name];
   return { ok: true, json: async () => ({ answers }) };
 };
 `;
@@ -373,3 +374,14 @@ test('explicit cwd loads project rules when the server starts outside a repo', a
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+
+for (const missing of [RULE_NAMES, ['defect']]) {
+  test(`missing answers fail the review: ${missing.join(', ')}`, async () => {
+    const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_MISSING: missing.join(',') });
+    const result = extractResult(stdout, 1);
+    assert.equal(result.isError, true);
+    assert.equal(result.content[0].text, `Jev returned no answer for: ${missing.join(', ')}. Review not completed.`);
+    assert.doesNotMatch(result.content[0].text, /PASSED/);
+  });
+}

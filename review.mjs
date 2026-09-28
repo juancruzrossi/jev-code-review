@@ -494,6 +494,10 @@ function tierFor(probability) {
 }
 
 export function findings(results, rules, tagged) {
+  const missing = [...new Set(results.flatMap(({ response, rules: asked }) =>
+    asked.filter((rule) => !Number.isFinite(response?.answers?.[rule.name]?.noul)).map((rule) => rule.name)
+  ))];
+  if (missing.length > 0) throw new Error(`Jev returned no answer for: ${missing.join(', ')}. Review not completed.`);
   const byName = new Map(rules.map((r) => [r.name, { rule: r, probability: 0, where: null, lineConfidence: null }]));
 
   for (const result of results) {
