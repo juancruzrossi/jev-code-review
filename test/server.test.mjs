@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRepo } from './git-repo-fixture.mjs';
@@ -23,10 +25,19 @@ const FETCH_STUB = `
 const RULE_NAMES = ${JSON.stringify(RULE_NAMES)};
 let __call = 0;
 const __roundProbs = process.env.JEV_STUB_ROUND_PROBS ? JSON.parse(process.env.JEV_STUB_ROUND_PROBS) : null;
+const __ruleProbs = process.env.JEV_STUB_RULE_PROBS ? JSON.parse(process.env.JEV_STUB_RULE_PROBS) : null;
 globalThis.fetch = async (url, opts) => {
   const body = JSON.parse(opts.body);
+
+  if (typeof body.state.instructions_file === 'string') {
+    process.stderr.write('EXTRACT:' + JSON.stringify(body.state.instructions_file) + '\\n');
+    const answers = {};
+    for (const key of Object.keys(body.questions)) answers[key] = { noul: 0.9 };
+    return { ok: true, json: async () => ({ answers }) };
+  }
+
   process.stderr.write('TASK:' + JSON.stringify(body.state.task) + '\\n');
-  process.stderr.write('PROJECT_RULES:' + JSON.stringify(body.state.project_rules ?? null) + '\\n');
+  process.stderr.write('REVIEWKEYS:' + JSON.stringify(Object.keys(body.questions)) + '\\n');
   const delayMs = Number(process.env.JEV_STUB_DELAY_MS ?? 0);
   if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   const round = __call;
@@ -37,7 +48,9 @@ globalThis.fetch = async (url, opts) => {
   for (const [key, q] of Object.entries(body.questions)) {
     if (q.type === 'noul') {
       let prob = scalarProb;
-      if (__roundProbs) {
+      if (__ruleProbs && key in __ruleProbs) {
+        prob = __ruleProbs[key];
+      } else if (__roundProbs) {
         const idx = RULE_NAMES.indexOf(key);
         const roundArr = __roundProbs[Math.min(round, __roundProbs.length - 1)];
         prob = roundArr[idx];
@@ -126,11 +139,44 @@ function extractResult(stdout, id) {
     .find((msg) => msg.id === id).result;
 }
 
-function extractProjectRules(stderr) {
+function extractExtractedFiles(stderr) {
   return stderr
     .split('\n')
-    .filter((line) => line.startsWith('PROJECT_RULES:'))
-    .map((line) => JSON.parse(line.slice('PROJECT_RULES:'.length)));
+    .filter((line) => line.startsWith('EXTRACT:'))
+    .map((line) => JSON.parse(line.slice('EXTRACT:'.length)));
+}
+
+function reviewCallCount(stderr) {
+  return stderr.split('\n').filter((line) => line.startsWith('REVIEWKEYS:')).length;
+}
+
+function agentsDiff(filePath) {
+  return `diff --git a/${filePath} b/${filePath}
+index 111..222 100644
+--- a/${filePath}
++++ b/${filePath}
+@@ -1,1 +1,2 @@
+ const a = 1;
++console.log(a);
+`;
+}
+
+function ruleCachePathFor(content) {
+  const key = createHash('sha1').update(content).digest('hex');
+  return path.join(tmpdir(), `jev-rules-${key}.json`);
+}
+
+function makeApiWebFixture() {
+  const dir = makeRepo('jev-monorepo-');
+  mkdirSync(path.join(dir, 'packages', 'api'), { recursive: true });
+  mkdirSync(path.join(dir, 'packages', 'web'), { recursive: true });
+  const apiRule = 'Never call console.log directly in this codebase.\n';
+  const webRule = 'Never use inline styles in components.\n';
+  writeFileSync(path.join(dir, 'packages', 'api', 'AGENTS.md'), apiRule);
+  writeFileSync(path.join(dir, 'packages', 'web', 'AGENTS.md'), webRule);
+  rmSync(ruleCachePathFor(apiRule), { force: true });
+  rmSync(ruleCachePathFor(webRule), { force: true });
+  return dir;
 }
 
 test('a single call sends its own task, reports round 1, and never prints a marker', async () => {
@@ -246,44 +292,60 @@ test('a call with a stray previous argument works', async () => {
   assert.match(text, /PASSED — deliver\./);
 });
 
-test('a git root with AGENTS.md sends its text as state.project_rules and asks the project_rules question', async () => {
-  const dir = makeRepo('jev-agents-');
+test('a violation of an api AGENTS.md rule is reported with the rule text and its source file', async () => {
+  const dir = makeApiWebFixture();
   try {
-    writeFileSync(path.join(dir, 'AGENTS.md'), 'Never call console.log.');
-    const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
+    const diff = agentsDiff('packages/api/x.js');
+    const { stdout } = await runServer(
+      [call(1, { task: 'A', diff })],
+      { JEV_STUB_PROB: '0.05', JEV_STUB_RULE_PROBS: JSON.stringify({ agents_1: 0.95 }) },
+      dir
+    );
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /project_rules/);
-    const [rules] = extractProjectRules(stderr);
-    assert.match(rules, /# AGENTS\.md/);
-    assert.match(rules, /Never call console\.log\./);
+    assert.match(text, /"Never call console\.log directly in this codebase\." \(packages\/api\/AGENTS\.md\) 95%/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('a git root with CLAUDE.md only sends its text as state.project_rules', async () => {
-  const dir = makeRepo('jev-claude-');
+test('rules from web AGENTS.md are never asked for an api-only change', async () => {
+  const dir = makeApiWebFixture();
+  try {
+    const diff = agentsDiff('packages/api/x.js');
+    const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
+    const text = extractResult(stdout, 1).content[0].text;
+    assert.doesNotMatch(text, /inline styles/);
+    assert.deepEqual(extractExtractedFiles(stderr), ['packages/api/AGENTS.md']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no AGENTS files anywhere means only built-in questions are asked and the output matches the unscoped shape', async () => {
+  const dir = makeRepo('jev-noagents-');
   try {
     writeFileSync(path.join(dir, 'CLAUDE.md'), 'Money amounts are integers in cents.');
     const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /project_rules/);
-    const [rules] = extractProjectRules(stderr);
-    assert.match(rules, /# CLAUDE\.md/);
-    assert.match(rules, /Money amounts are integers in cents\./);
+    assert.match(text, /PASSED — deliver\./);
+    assert.doesNotMatch(text, /agents_/);
+    assert.doesNotMatch(text, /project rules/);
+    assert.deepEqual(extractExtractedFiles(stderr), []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('a git root with neither file never asks the project_rules question', async () => {
-  const dir = makeRepo('jev-noagents-');
+test('stage 2 locate is skipped when no project rule reaches the advisory tier', async () => {
+  const dir = makeRepo('jev-lowscore-');
   try {
-    const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
+    mkdirSync(path.join(dir, 'packages', 'api'), { recursive: true });
+    writeFileSync(path.join(dir, 'packages', 'api', 'AGENTS.md'), 'Never call console.log directly in this codebase.\n');
+    const diff = agentsDiff('packages/api/x.js');
+    const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.doesNotMatch(text, /project_rules/);
-    const [rules] = extractProjectRules(stderr);
-    assert.equal(rules, null);
+    assert.match(text, /PASSED — deliver\./);
+    assert.equal(reviewCallCount(stderr), 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

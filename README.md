@@ -26,7 +26,7 @@ Must resolve:
 - math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, ...
 ```
 
-You don't need to ask for it, and your `AGENTS.md` or `CLAUDE.md` doesn't need to mention it. The agent does it on every code change.
+You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. The agent does it on every code change.
 
 Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
@@ -44,8 +44,9 @@ Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule cat
 
 Jev also checks a change against your project's own conventions:
 
-- If the git root has an `AGENTS.md` or `CLAUDE.md`, its text (capped at 6,000 characters) is checked as a `project_rules` rule. Nothing needs to be added there for this — it reads what already exists.
-- For rules that don't belong in `AGENTS.md`/`CLAUDE.md`, add `.jev/rules.json` at the git root:
+- For each changed file, Jev reads the `AGENTS*.md` files (for example `AGENTS.md` and `AGENTS.local.md`) in that file's own directory and every ancestor directory up to the git root — never a sibling module's `AGENTS.md`, and never `CLAUDE.md`. Nothing needs to be added there for this — it reads what already exists.
+- Each code rule found in those files is checked and located on its own, and findings name the rule and the file it came from: `- path:line — "the rule text" (path/to/AGENTS.md) NN%`. A repository with no `AGENTS*.md` files runs exactly as before.
+- For rules that don't belong in `AGENTS.md`, add `.jev/rules.json` at the git root:
 
 ```json
 [{ "name": "no_console_log", "rule": "never call console.log in production code" }]

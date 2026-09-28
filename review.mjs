@@ -6,7 +6,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -109,7 +109,7 @@ export function tagDiff(diff) {
   return { text: out.join('\n'), lines };
 }
 
-function findGitRoot(cwd) {
+export function findGitRoot(cwd) {
   let dir = path.resolve(cwd);
   for (;;) {
     if (existsSync(path.join(dir, '.git'))) return dir;
@@ -119,33 +119,49 @@ function findGitRoot(cwd) {
   }
 }
 
-const PROJECT_INSTRUCTIONS_CAP = 6000;
+const AGENTS_FILE_PATTERN = /^AGENTS.*\.md$/;
 
-export function loadProjectInstructions(cwd) {
-  const root = findGitRoot(cwd);
-  if (!root) return null;
-  const parts = [];
-  for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+export function instructionFiles(root, changedPaths) {
+  const resolvedRoot = path.resolve(root);
+  const seen = new Map();
+
+  for (const changedPath of changedPaths) {
+    let dir = path.resolve(resolvedRoot, path.dirname(changedPath));
+    if (dir !== resolvedRoot && !dir.startsWith(resolvedRoot + path.sep)) continue;
+
+    for (;;) {
+      for (const file of listAgentsFiles(resolvedRoot, dir)) {
+        if (!seen.has(file.path)) seen.set(file.path, file);
+      }
+      if (dir === resolvedRoot) break;
+      dir = path.dirname(dir);
+    }
+  }
+
+  return [...seen.values()];
+}
+
+function listAgentsFiles(root, dir) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files = [];
+  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!AGENTS_FILE_PATTERN.test(entry.name) || !entry.isFile()) continue;
+    const absolute = path.join(dir, entry.name);
     let content;
     try {
-      content = readFileSync(path.join(root, name), 'utf8');
+      content = readFileSync(absolute, 'utf8');
     } catch {
       continue;
     }
-    parts.push(`# ${name}\n${content}`);
+    files.push({ path: path.relative(root, absolute), dir: path.relative(root, dir), content });
   }
-  if (parts.length === 0) return null;
-  return parts.join('\n\n').slice(0, PROJECT_INSTRUCTIONS_CAP);
+  return files;
 }
-
-export const PROJECT_RULES_RULE = {
-  name: 'project_rules',
-  needsTask: false,
-  locate: true,
-  ask: 'Does an added line break a rule written in `project_rules`?',
-  violation: "Yes: an added line breaks a rule stated in the project's AGENTS.md or CLAUDE.md.",
-  clean: 'No: no added line breaks a rule stated in `project_rules`, or those files state no rule about this code.'
-};
 
 export function loadRepoRules(cwd) {
   const root = findGitRoot(cwd);
@@ -174,6 +190,136 @@ export function loadRepoRules(cwd) {
   }));
 }
 
+const HEADING_LINE = /^#{1,6}\s/;
+const FENCE_LINE = /^(```|~~~)/;
+const TABLE_SEPARATOR_LINE = /^[\s|:-]+$/;
+const LIST_MARKER = /^(?:[-*+]|\d+\.)\s+/;
+
+export function candidateLines(content) {
+  const result = [];
+  for (const rawLine of content.split('\n')) {
+    if (result.length >= 80) break;
+    const trimmed = rawLine.trim();
+    if (trimmed === '') continue;
+    if (HEADING_LINE.test(trimmed)) continue;
+    if (FENCE_LINE.test(trimmed)) continue;
+    if (TABLE_SEPARATOR_LINE.test(trimmed) && trimmed.includes('-')) continue;
+    const stripped = trimmed.replace(LIST_MARKER, '').trim();
+    if (stripped.length < 12 || stripped.length > 400) continue;
+    result.push(stripped);
+  }
+  return result;
+}
+
+export async function extractRules({ apiKey, file, fetchImpl = fetch }) {
+  const cacheKey = createHash('sha1').update(file.content).digest('hex');
+  const cachePath = path.join(os.tmpdir(), `jev-rules-${cacheKey}.json`);
+
+  try {
+    const cached = JSON.parse(readFileSync(cachePath, 'utf8'));
+    if (Array.isArray(cached)) return cached;
+  } catch {
+    // cache miss or unreadable cache: fall through to extraction
+  }
+
+  const candidates = candidateLines(file.content);
+  if (candidates.length === 0) {
+    try {
+      writeFileSync(cachePath, JSON.stringify([]));
+    } catch {
+      // ignore: the next call re-extracts
+    }
+    return [];
+  }
+
+  const questions = {};
+  for (let i = 0; i < candidates.length; i += 1) {
+    const n = i + 1;
+    questions[`line_${n}`] = {
+      type: 'noul',
+      instructions: `Is line ${n} a rule about how code in this project must be written?`,
+      criteria: {
+        true: `Yes: line ${n} states how code must or must not be written.`,
+        false: `No: line ${n} is prose, process, or context, not a rule about code.`
+      }
+    };
+  }
+  const state = {
+    instructions_file: file.path,
+    lines: candidates.map((text, i) => `${i + 1}| ${text}`).join('\n')
+  };
+
+  let response;
+  try {
+    response = await callJev(apiKey, state, questions, fetchImpl);
+  } catch {
+    return [];
+  }
+
+  const kept = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const answer = response.answers?.[`line_${i + 1}`];
+    if (answer && typeof answer.noul === 'number' && answer.noul >= 0.5) kept.push(candidates[i]);
+  }
+
+  try {
+    writeFileSync(cachePath, JSON.stringify(kept));
+  } catch {
+    // ignore: the next call re-extracts
+  }
+  return kept;
+}
+
+const MAX_PROJECT_RULES = 60;
+
+export async function projectRules({ apiKey, root, changedPaths, fetchImpl = fetch }) {
+  try {
+    const files = instructionFiles(root, changedPaths);
+    const rules = [];
+    let counter = 0;
+    for (const file of files) {
+      const extracted = await extractRules({ apiKey, file, fetchImpl });
+      for (const ruleText of extracted) {
+        counter += 1;
+        rules.push({
+          name: `agents_${counter}`,
+          needsTask: false,
+          locate: true,
+          dir: file.dir,
+          source: file.path,
+          ruleText,
+          ask: `Does an added line break this project rule: "${ruleText}"?`,
+          violation: `Yes: an added line breaks "${ruleText}" (from ${file.path}).`,
+          clean: `No: no added line breaks "${ruleText}".`
+        });
+        if (rules.length >= MAX_PROJECT_RULES) return rules;
+      }
+    }
+    return rules;
+  } catch {
+    return [];
+  }
+}
+
+function isProjectRule(rule) {
+  return typeof rule.dir === 'string';
+}
+
+function underDir(filePath, dir) {
+  if (dir === '') return true;
+  return filePath === dir || filePath.startsWith(`${dir}/`);
+}
+
+function locateQuestion(ruleName, lineIds) {
+  const criteria = {};
+  for (const id of lineIds) criteria[id] = null;
+  return {
+    type: 'choice',
+    instructions: `If \`${ruleName}\` is true, which numbered added line breaks it? If not, pick the line most likely to.`,
+    criteria
+  };
+}
+
 export function buildQuestions(rules, lineIds) {
   const questions = {};
   for (const rule of rules) {
@@ -183,13 +329,7 @@ export function buildQuestions(rules, lineIds) {
       criteria: { true: rule.violation, false: rule.clean }
     };
     if (rule.locate && lineIds.length > 0) {
-      const criteria = {};
-      for (const id of lineIds) criteria[id] = null;
-      questions[`${rule.name}_line`] = {
-        type: 'choice',
-        instructions: `If \`${rule.name}\` is true, which numbered added line breaks it? If not, pick the line most likely to.`,
-        criteria
-      };
+      questions[`${rule.name}_line`] = locateQuestion(rule.name, lineIds);
     }
   }
   return questions;
@@ -222,6 +362,49 @@ export async function askJev({ apiKey, state, rules, tagged, fetchImpl = fetch }
   }
 
   return results;
+}
+
+export async function askInStages({ apiKey, state, rules, tagged, fetchImpl = fetch }) {
+  const stage1Rules = rules.map((rule) => (isProjectRule(rule) ? { ...rule, locate: false } : rule));
+  const stage1Results = await askJev({ apiKey, state, rules: stage1Rules, tagged, fetchImpl });
+
+  const projectRuleSet = rules.filter(isProjectRule);
+  if (projectRuleSet.length === 0) return stage1Results;
+
+  const stage1Found = findings(stage1Results, rules, tagged);
+  const elevated = stage1Found
+    .filter((f) => f.tier !== 'none' && projectRuleSet.some((r) => r.name === f.name))
+    .map((f) => ({ rule: projectRuleSet.find((r) => r.name === f.name), probability: f.probability }));
+  if (elevated.length === 0) return stage1Results;
+
+  const questions = {};
+  const usable = [];
+  for (const { rule, probability } of elevated) {
+    const lineIds = [...tagged.lines].filter(([, info]) => underDir(info.path, rule.dir)).map(([id]) => id);
+    if (lineIds.length === 0) continue;
+    questions[`${rule.name}_line`] = locateQuestion(rule.name, lineIds);
+    usable.push({ rule, probability });
+  }
+  if (usable.length === 0) return stage1Results;
+
+  let response;
+  try {
+    response = await callJev(apiKey, { ...state, diff: tagged.text }, questions, fetchImpl);
+  } catch {
+    return stage1Results;
+  }
+
+  const stage2Results = usable.map(({ rule, probability }) => ({
+    response: {
+      answers: {
+        [rule.name]: { noul: probability },
+        [`${rule.name}_line`]: response.answers?.[`${rule.name}_line`]
+      }
+    },
+    rules: [rule]
+  }));
+
+  return [...stage1Results, ...stage2Results];
 }
 
 function untagDiffText(text) {
@@ -343,7 +526,9 @@ export function findings(results, rules, tagged) {
       probability: entry.probability,
       where: entry.where,
       lineConfidence: entry.lineConfidence,
-      tier: tierFor(entry.probability)
+      tier: tierFor(entry.probability),
+      ruleText: rule.ruleText,
+      source: rule.source
     };
   });
 }
@@ -352,6 +537,14 @@ export function formatWhere(finding) {
   if (!finding.where) return '';
   const uncertain = finding.lineConfidence !== null && finding.lineConfidence < LINE_CONFIDENCE ? ' (line uncertain)' : '';
   return `${finding.where.path}:${finding.where.line}${uncertain} — `;
+}
+
+export function findingLine(finding) {
+  const percent = Math.round(finding.probability * 100);
+  if (finding.source) {
+    return `- ${formatWhere(finding)}"${finding.ruleText}" (${finding.source}) ${percent}%`;
+  }
+  return `- ${formatWhere(finding)}${finding.name} ${percent}%: ${finding.violation}`;
 }
 
 const ENV_KEY_PATTERN = /^\s*(?:export\s+)?JEV_API_KEY\s*=\s*(.*)$/;
@@ -496,20 +689,18 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
 
-  const projectInstructions = loadProjectInstructions(cwd);
-  const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd)];
-  if (projectInstructions) rules.push(PROJECT_RULES_RULE);
   const tagged = tagDiff(diff);
+  const root = findGitRoot(cwd);
+  const changedPaths = [...new Set([...tagged.lines.values()].map((info) => info.path))];
+  const projRules = root ? await projectRules({ apiKey, root, changedPaths, fetchImpl }) : [];
+  const rules = [...RULES.filter((r) => !r.needsTask), ...loadRepoRules(cwd), ...projRules];
   const state = { task: '' };
-  if (projectInstructions) state.project_rules = projectInstructions;
-  const results = await askJev({ apiKey, state, rules, tagged, fetchImpl });
+  const results = await askInStages({ apiKey, state, rules, tagged, fetchImpl });
   const blockFindings = findings(results, rules, tagged).filter((f) => f.tier === 'block');
   if (blockFindings.length === 0) return '';
 
   const lines = ['Jev after edit:'];
-  for (const f of blockFindings) {
-    lines.push(`- ${formatWhere(f)}${f.name} ${Math.round(f.probability * 100)}%: ${f.violation}`);
-  }
+  for (const f of blockFindings) lines.push(findingLine(f));
   lines.push('Check these lines now.');
   return lines.join('\n');
 }

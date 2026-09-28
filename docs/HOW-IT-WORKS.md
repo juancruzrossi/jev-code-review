@@ -14,7 +14,7 @@ jev-code-review replaces that with short, specific findings:
 
 ## When it runs
 
-It runs on its own. You don't need to ask for it, and your agent instructions (`AGENTS.md`, `CLAUDE.md`) don't need to mention it.
+It runs on its own. You don't need to ask for it, and your agent instructions (`AGENTS.md`) don't need to mention it.
 
 1. **After each edit.** When the agent changes a file, Jev checks the new lines in about a second. It speaks only when it is confident something is wrong, so the agent can fix it while it is still in that file.
 2. **Before the agent answers.** When the agent finishes a change, it asks Jev to review the whole diff against your request. If Jev finds problems, the agent fixes them and asks again, up to three rounds. It stops early when another round would not help.
@@ -65,4 +65,4 @@ You can add rules for your own project, such as "money amounts are integers in c
 
 ## What leaves your machine
 
-To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, any files the agent passes along for context, and — if the git root has one — the text of `AGENTS.md` or `CLAUDE.md` (capped at 6,000 characters). It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
+To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, any files the agent passes along for context, and the rule lines found in the `AGENTS*.md` files that apply to the changed files' directories and their parents — never a sibling module's `AGENTS.md`, never `CLAUDE.md`, and never the whole file. It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
