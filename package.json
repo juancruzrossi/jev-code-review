@@ -4,7 +4,6 @@
   "description": "Jev code review for coding agents: checks each change against your request and your project's rules, and points to the exact line.",
   "type": "module",
   "main": "./.opencode/plugins/jev-code-review.mjs",
-  "license": "MIT",
   "author": {
     "name": "Juan Cruz Rossi",
     "url": "https://github.com/juancruzrossi"
