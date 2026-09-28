@@ -84,7 +84,7 @@ async function runReview(args) {
 
   const apiKey = readApiKey();
   if (!apiKey) {
-    throw new Error('JEV_API_KEY is not set (checked process.env and ~/.env).');
+    throw new Error('JEV_API_KEY is not set (checked process.env and ~/.envs).');
   }
 
   const loop = findLoop(task);

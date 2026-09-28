@@ -69,4 +69,4 @@ You can add rules for your own project, such as "money amounts are integers in c
 
 ## What leaves your machine
 
-To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, any files the agent passes along for context, and the rule lines found in the `AGENTS*.md` files that apply to the changed files' directories and their parents — never a sibling module's `AGENTS.md`, never `CLAUDE.md`, and never the whole file. It needs a Jev API key in `JEV_API_KEY` or in `~/.env`.
+To review a change, the plugin sends the Jev API (TypeSafe) your request, the diff, any files the agent passes along for context, and the rule lines found in the `AGENTS*.md` files that apply to the changed files' directories and their parents — never a sibling module's `AGENTS.md`, never `CLAUDE.md`, and never the whole file. It needs a Jev API key in `JEV_API_KEY` or in `~/.envs`.

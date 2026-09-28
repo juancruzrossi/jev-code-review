@@ -203,7 +203,7 @@ test('project rule questions see only their directory and skip untouched directo
   }
 });
 
-test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFile', () => {
+test('readApiKey reads JEV_API_KEY from ~/.envs when Bun has no process.loadEnvFile', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'jev-home-'));
   const originalHome = process.env.HOME;
   const hadKey = Object.prototype.hasOwnProperty.call(process.env, 'JEV_API_KEY');
@@ -214,10 +214,10 @@ test('readApiKey reads JEV_API_KEY from ~/.env when Bun has no process.loadEnvFi
     process.env.HOME = home;
     delete process.loadEnvFile;
 
-    writeFileSync(path.join(home, '.env'), 'JEV_API_KEY="abc"\n');
+    writeFileSync(path.join(home, '.envs'), 'JEV_API_KEY="abc"\n');
     assert.equal(readApiKey(), 'abc');
 
-    writeFileSync(path.join(home, '.env'), 'export JEV_API_KEY="abc"\n');
+    writeFileSync(path.join(home, '.envs'), 'export JEV_API_KEY="abc"\n');
     assert.equal(readApiKey(), 'abc');
   } finally {
     if (hadKey) process.env.JEV_API_KEY = originalKey;
@@ -251,7 +251,7 @@ test('per-edit requests exclude untracked secret names while retaining tracked f
   execFileSync('git', ['-C', dir, 'commit', '-qm', 'track fixture']);
   writeFileSync(path.join(dir, '.env.tracked'), 'tracked after\n');
   mkdirSync(path.join(dir, 'nested'));
-  for (const name of ['.env', '.env.local', 'cert.pem', 'private.key', 'id_rsa', 'id_rsa.pub', 'café.pem', 'tab\t.key']) {
+  for (const name of ['.env', '.envs', '.env.local', 'cert.pem', 'private.key', 'id_rsa', 'id_rsa.pub', 'café.pem', 'tab\t.key']) {
     writeFileSync(path.join(dir, name), 'SYNTHETIC_SECRET\n');
     writeFileSync(path.join(dir, 'nested', name), 'SYNTHETIC_SECRET\n');
   }

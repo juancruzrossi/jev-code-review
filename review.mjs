@@ -582,7 +582,7 @@ export function readApiKey() {
   if (process.env.JEV_API_KEY) return process.env.JEV_API_KEY;
   let content;
   try {
-    content = readFileSync(path.join(os.homedir(), '.env'), 'utf8');
+    content = readFileSync(path.join(os.homedir(), '.envs'), 'utf8');
   } catch {
     return null;
   }
@@ -652,7 +652,7 @@ export async function changedFiles(cwd) {
     for (const file of tracked.stdout.split('\0')) if (file) files.add(file);
     for (const file of untracked.stdout.split('\0')) {
       if (!file || /(^|\/)\.git(\/|$)/.test(file)) continue;
-      if (/^(?:\.env(?:\..*)?|.*\.(?:pem|key)|id_rsa.*)$/.test(path.basename(file))) continue;
+      if (/^(?:\.envs?(?:\..*)?|.*\.(?:pem|key)|id_rsa.*)$/.test(path.basename(file))) continue;
       files.add(file);
     }
     return [...files];

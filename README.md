@@ -65,7 +65,7 @@ Each successful review appends a JSON line to `$XDG_STATE_HOME/jev-code-review/d
 ## Requirements
 
 - Node.js
-- A Jev API key from [TypeSafe](https://console.typesafe.ai), as `JEV_API_KEY` in your environment or in `~/.env`
+- A Jev API key from [TypeSafe](https://console.typesafe.ai), as `JEV_API_KEY` in your environment or in `~/.envs`
 
 ## Install
 
