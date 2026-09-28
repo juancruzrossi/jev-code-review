@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -348,5 +348,28 @@ test('stage 2 locate is skipped when no project rule reaches the advisory tier',
     assert.equal(reviewCallCount(stderr), 1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('explicit cwd loads project rules when the server starts outside a repo', async () => {
+  const dir = makeRepo('jev-explicit-cwd-');
+  const outside = mkdtempSync(path.join(tmpdir(), 'jev-outside-'));
+  try {
+    writeFileSync(path.join(dir, 'AGENTS.md'), 'Never call console.warn in this project.\n');
+    mkdirSync(path.join(dir, '.jev'));
+    writeFileSync(path.join(dir, '.jev', 'rules.json'), JSON.stringify([{ name: 'local_rule', rule: 'Avoid globals.' }]));
+    const { stdout, stderr } = await runServer([call(1, { task: 'A', cwd: dir })], {}, outside);
+    assert.equal(extractResult(stdout, 1).isError, undefined);
+    assert.match(stderr, /REVIEWKEYS:.*agents_1/);
+    assert.match(stderr, /REVIEWKEYS:.*local_rule/);
+    for (const cwd of [undefined, path.join(outside, 'missing'), serverPath, 42]) {
+      const result = await runServer([call(1, { task: 'A', cwd })], {}, outside);
+      assert.equal(extractResult(result.stdout, 1).isError, undefined);
+      assert.doesNotMatch(result.stderr, /agents_1|local_rule/);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });

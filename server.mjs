@@ -7,6 +7,7 @@
 // with zero runtime dependencies.
 
 import readline from 'node:readline';
+import { statSync } from 'node:fs';
 import { RULES, BLOCK_TIER, tagDiff, loadRepoRules, projectRules, askInStages, findings, findingLine, readApiKey, findGitRoot } from './review.mjs';
 
 const MAX_ROUNDS = 3;
@@ -78,10 +79,14 @@ async function runReview(args) {
   const pinnedTask = loop ? loop.task : task;
 
   const tagged = tagDiff(diff);
-  const root = findGitRoot(process.cwd());
+  let cwd = process.cwd();
+  try {
+    if (typeof args.cwd === 'string' && statSync(args.cwd).isDirectory()) cwd = args.cwd;
+  } catch {}
+  const root = findGitRoot(cwd);
   const changedPaths = [...new Set([...tagged.lines.values()].map((info) => info.path))];
   const projRules = root ? await projectRules({ apiKey, root, changedPaths }) : [];
-  const rules = [...RULES, ...loadRepoRules(process.cwd()), ...projRules];
+  const rules = [...RULES, ...loadRepoRules(cwd), ...projRules];
 
   const state = { task: pinnedTask };
   if (Array.isArray(files) && files.length > 0) state.files = files;
@@ -149,6 +154,7 @@ const TOOL_DEFINITION = {
         type: 'string',
         description: 'Only the real diff of the change (e.g. `git diff`); no pseudo-diffs or changes outside the repo — describe those in `context`.'
       },
+      cwd: { type: 'string', description: 'Absolute path of the project directory you are working in. Pass it always.' },
       files: {
         type: 'array',
         description: 'Only neighboring files needed to judge conventions.',
