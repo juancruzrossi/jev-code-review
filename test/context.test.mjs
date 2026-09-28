@@ -57,7 +57,7 @@ test('a Claude Bash payload and a Codex apply_patch payload each report the righ
     );
     const message = JSON.parse(stdout);
     assert.match(message.hookSpecificOutput.additionalContext, /Jev after edit:/);
-    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Defects 90%/);
+    assert.match(message.hookSpecificOutput.additionalContext, /a\.js:2 — Bug 90%/);
   }
   {
     const dir = makeRepo('jev-hook-repo-');

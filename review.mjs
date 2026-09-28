@@ -53,7 +53,7 @@ export const RULES = [
   },
   {
     name: 'defect',
-    label: 'Defects',
+    label: 'Bug',
     needsTask: false,
     locate: true,
     ask: "Does an added line contain a concrete behavioral defect that the task's inputs or a caller can reach?",

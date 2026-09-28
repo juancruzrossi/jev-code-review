@@ -282,7 +282,7 @@ test('a failure leaves the previous review state intact and retries, whether an 
       return { ok: true, json: async () => ({ answers: { defect: { noul: 0.95 } } }) };
     } };
     assert.equal(await lintAfterEdit(opts), '');
-    assert.match(await lintAfterEdit(opts), /Defects 95%/);
+    assert.match(await lintAfterEdit(opts), /Bug 95%/);
     assert.equal(calls, 2);
     assert.equal(await lintAfterEdit(opts), '');
     assert.equal(calls, 2);

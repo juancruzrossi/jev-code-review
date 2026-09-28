@@ -22,21 +22,21 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ## What a finding looks like
 
 ```
-┌───────────────────────────────────┐
-│          Jev Code Review          │
-├──────────────────────┬────────────┤
-│         Risk         │   Chance   │
-├──────────────────────┼────────────┤
-│ Task not done        │ 8% ✓ low   │
-│ Unrelated changes    │ 16% ✓ low  │
-│ Missing requirements │ 15% ✓ low  │
-│ Defects              │ 92% ✗ high │
-├──────────────────────┴────────────┤
-│          Lower is better          │
-└───────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│              Jev Code Review               │
+├──────────────────────┬─────────────────────┤
+│ Is there a problem?  │       Chance        │
+├──────────────────────┼─────────────────────┤
+│ Task not done        │ 8% ✓                │
+│ Unrelated changes    │ 16% ✓               │
+│ Missing requirements │ 15% ✓               │
+│ Bug                  │ 92% ✗               │
+├──────────────────────┴─────────────────────┤
+│ 0% = surely fine · 100% = surely a problem │
+└────────────────────────────────────────────┘
 
 Must resolve:
-- math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
+- math.js:7 — Bug 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.
 ```
 
 Findings come in two tiers:
@@ -48,16 +48,16 @@ Findings come in two tiers:
 
 When Jev is unsure about the exact line, the finding says `(line uncertain)`. The agent ends its answer with the table, so you see the result too.
 
-Each percentage is the chance that the risk is real, so lower is better. The table marks `✓ low` below 55%, `! check` from 55% to below 90%, and `✗ high` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+Each percentage is the chance that the problem is real: 0% means surely fine, 100% means surely a problem. The table marks `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
 
 ## What it checks
 
-| Risk | Catches |
+| Problem | Catches |
 |---|---|
 | Task not done | The change does not do what your request asks, does it only partly, or breaks a constraint the request states. |
 | Unrelated changes | Renames, reformatting, or rewrites of code your request did not need changed. |
 | Missing requirements | Something your request explicitly asked for that is not in the change. |
-| Defects | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
+| Bug | A new line that misbehaves for some real input: a wrong value, a skipped item, a swallowed error, a missing `await`, a condition the wrong way round. |
 
 You can add rules for your own project, such as "money amounts are integers in cents, never floats". See [Project rules](../README.md#project-rules).
 

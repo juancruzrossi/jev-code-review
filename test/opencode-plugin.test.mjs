@@ -39,7 +39,7 @@ test('tool.execute.after appends the finding text after a file change, and leave
     await hooks['tool.execute.after']({ tool: 'edit', sessionID: 's2', args: {} }, first);
     assert.match(first.output, /original output/);
     assert.match(first.output, /Jev after edit:/);
-    assert.match(first.output, /a\.js:2 — Defects 90%/);
+    assert.match(first.output, /a\.js:2 — Bug 90%/);
 
     const second = { output: 'original output' };
     await hooks['tool.execute.after']({ tool: 'edit', sessionID: 's2', args: {} }, second);

@@ -12,37 +12,37 @@ Works with Claude Code, Codex, and OpenCode.
 4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌───────────────────────────────────┐
-│          Jev Code Review          │
-├──────────────────────┬────────────┤
-│         Risk         │   Chance   │
-├──────────────────────┼────────────┤
-│ Task not done        │ 8% ✓ low   │
-│ Unrelated changes    │ 16% ✓ low  │
-│ Missing requirements │ 15% ✓ low  │
-│ Defects              │ 92% ✗ high │
-├──────────────────────┴────────────┤
-│          Lower is better          │
-└───────────────────────────────────┘
+┌────────────────────────────────────────────┐
+│              Jev Code Review               │
+├──────────────────────┬─────────────────────┤
+│ Is there a problem?  │       Chance        │
+├──────────────────────┼─────────────────────┤
+│ Task not done        │ 8% ✓                │
+│ Unrelated changes    │ 16% ✓               │
+│ Missing requirements │ 15% ✓               │
+│ Bug                  │ 92% ✗               │
+├──────────────────────┴─────────────────────┤
+│ 0% = surely fine · 100% = surely a problem │
+└────────────────────────────────────────────┘
 
 Must resolve:
-- math.js:7 — Defects 92%: for some input it can receive, an added line returns a wrong value, ...
+- math.js:7 — Bug 92%: for some input it can receive, an added line returns a wrong value, ...
 ```
 
 You don't need to ask for it, and your `AGENTS.md` doesn't need to mention it. The agent does it on every code change.
 
 Read [How it works](docs/HOW-IT-WORKS.md) for what it solves, what each rule catches, and what it sends to the Jev API.
 
-Each percentage is the chance that the risk is real, so lower is better. The table marks `✓ low` below 55%, `! check` from 55% to below 90%, and `✗ high` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+Each percentage is the chance that the problem is real: 0% means surely fine, 100% means surely a problem. The table marks `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
 
 ## Built-in rules
 
-| Risk | Checks |
+| Problem | Checks |
 |---|---|
 | Task not done | The change fails to do what the task asks, or breaks a stated constraint |
 | Unrelated changes | A changed line does not trace to the task |
 | Missing requirements | Something the task asked for is missing |
-| Defects | An added line misbehaves for some real input |
+| Bug | An added line misbehaves for some real input |
 
 ### Project rules
 

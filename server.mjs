@@ -32,15 +32,15 @@ function padLeftAlign(text, width) {
 }
 
 const TABLE_TITLE = 'Jev Code Review';
-const TABLE_FOOTER = 'Lower is better';
+const TABLE_FOOTER = '0% = surely fine · 100% = surely a problem';
 
 function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
-  const headers = ['Risk', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), rounds.length > 1 ? 'Final' : 'Chance'];
+  const headers = ['Is there a problem?', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), rounds.length > 1 ? 'Final' : 'Chance'];
   const rows = tableFound.map(({ name, probability }, row) => [
     ruleLabel(name),
     ...rounds.slice(0, -1).map((round) => `${round[row]}%`),
-    `${finals[row]}% ${probability < ADVISE_TIER ? '✓ low' : probability < BLOCK_TIER ? '! check' : '✗ high'}`
+    `${finals[row]}% ${probability < ADVISE_TIER ? '✓' : probability < BLOCK_TIER ? '!' : '✗'}`
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);

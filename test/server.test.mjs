@@ -163,18 +163,18 @@ test('a clean review sends its task, reports round 1, renders a well-formed tabl
   assert.match(table[0], /^┌─+┐$/);
   assert.match(table[1], /^│\s+Jev Code Review\s+│$/);
   assert.match(table[2], /^├─+┬[─┬]*┤$/);
-  assert.match(table[3], /│\s+Risk\s+│\s+Chance\s+│/);
-  assert.match(table.at(-2), /^│\s+Lower is better\s+│$/);
+  assert.match(table[3], /│\s+Is there a problem\?\s+│\s+Chance\s+│/);
+  assert.match(table.at(-2), /^│\s+0% = surely fine · 100% = surely a problem\s+│$/);
   assert.equal(new Set(table.map((l) => [...l].length)).size, 1);
 
   const ruleProbs = { addresses_task: 0.549, unrelated_change: 0.55, missing_requirement: 0.899, defect: 0.9 };
   const { stdout: out } = await runServer([call(1, { task: 'A' })], { JEV_STUB_RULE_PROBS: JSON.stringify(ruleProbs) });
   const t = extractResult(out, 1).content[0].text;
   for (const [label, probability, mark] of [
-    ['Task not done', 0.549, '✓ low'],
-    ['Unrelated changes', 0.55, '! check'],
-    ['Missing requirements', 0.899, '! check'],
-    ['Defects', 0.9, '✗ high']
+    ['Task not done', 0.549, '✓'],
+    ['Unrelated changes', 0.55, '!'],
+    ['Missing requirements', 0.899, '!'],
+    ['Bug', 0.9, '✗']
   ]) {
     assert.match(t, new RegExp(`│ ${label} +│ ${Math.round(probability * 100)}% ${mark} +│`));
   }
@@ -185,19 +185,19 @@ test('a must-resolve finding prints its path:line and flags a low line confidenc
     const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95' });
     const text = extractResult(stdout, 1).content[0].text;
     assert.match(text, /^Must resolve/m);
-    assert.match(text, /- a\.js:2 — Defects 95%:/);
+    assert.match(text, /- a\.js:2 — Bug 95%:/);
     assert.match(text, /Round 1\/3/);
   }
   {
     const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.95', JEV_STUB_LINE_PROB: '0.3' });
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /- a\.js:2 \(line uncertain\) — Defects 95%:/);
+    assert.match(text, /- a\.js:2 \(line uncertain\) — Bug 95%:/);
   }
   {
     const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.6' });
     const text = extractResult(stdout, 1).content[0].text;
     assert.match(text, /^Check — open the line/m);
-    assert.match(text, /- a\.js:2 — Defects 60%:/);
+    assert.match(text, /- a\.js:2 — Bug 60%:/);
     assert.equal(text.split('\n').at(-1), `No blockers — ${RULE_NAMES.length} to check. Open each line and change it only if the problem is real.`);
   }
 });
@@ -275,7 +275,7 @@ test('project rules: an api rule is reported with its text and source file, web 
     assert.match(stderr, /REVIEWKEYS:.*agents_1/);
     assert.match(stderr, /REVIEWKEYS:.*local_rule/);
     const table = extractResult(stdout, 1).content[0].text;
-    for (const label of ['Task not done', 'Unrelated changes', 'Missing requirements', 'Defects', 'Local rule', 'Project rules']) {
+    for (const label of ['Task not done', 'Unrelated changes', 'Missing requirements', 'Bug', 'Local rule', 'Project rules']) {
       assert.match(table, new RegExp(`│ ${label} +│`));
     }
     assert.doesNotMatch(table, /│ \w+_\w+/);
