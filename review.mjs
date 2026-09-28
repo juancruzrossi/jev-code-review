@@ -70,6 +70,16 @@ export const RULES = [
 
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
+function decodeGitPath(value) {
+  if (!value.startsWith('"')) return value;
+  const escapes = { a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' };
+  return Buffer.concat([...value.slice(1, -1).matchAll(/\\([0-7]{1,3}|.)|([^\\]+)/gs)].map(([, escape, literal]) => {
+    if (literal) return Buffer.from(literal);
+    if (/^[0-7]{1,3}$/.test(escape)) return Buffer.from([parseInt(escape, 8)]);
+    return Buffer.from(escapes[escape] ?? escape);
+  })).toString('utf8');
+}
+
 export function tagDiff(diff) {
   const lines = new Map();
   const out = [];
@@ -78,9 +88,9 @@ export function tagDiff(diff) {
   let counter = 0;
 
   for (const rawLine of diff.split('\n')) {
-    const fileMatch = /^\+\+\+ b\/(.+)$/.exec(rawLine);
+    const fileMatch = /^\+\+\+ (b\/.+|".+")$/.exec(rawLine);
     if (fileMatch) {
-      currentPath = fileMatch[1];
+      currentPath = decodeGitPath(fileMatch[1]).slice(2);
       out.push(rawLine);
       continue;
     }
@@ -365,45 +375,56 @@ export async function askJev({ apiKey, state, rules, tagged, fetchImpl = fetch }
 }
 
 export async function askInStages({ apiKey, state, rules, tagged, fetchImpl = fetch }) {
-  const stage1Rules = rules.map((rule) => (isProjectRule(rule) ? { ...rule, locate: false } : rule));
-  const stage1Results = await askJev({ apiKey, state, rules: stage1Rules, tagged, fetchImpl });
+  const builtInRules = rules.filter((rule) => !isProjectRule(rule));
+  const stage1Results = builtInRules.length > 0
+    ? await askJev({ apiKey, state, rules: builtInRules, tagged, fetchImpl })
+    : [];
+  const groups = new Map();
+  for (const rule of rules.filter(isProjectRule)) {
+    if (!groups.has(rule.dir)) groups.set(rule.dir, []);
+    groups.get(rule.dir).push(rule);
+  }
 
-  const projectRuleSet = rules.filter(isProjectRule);
-  if (projectRuleSet.length === 0) return stage1Results;
+  const scopes = new Map();
+  for (const [dir, group] of groups) {
+    const lines = new Map([...tagged.lines].filter(([, info]) => underDir(info.path, dir)));
+    if (lines.size === 0) continue;
+    const text = dir === '' ? tagged.text : tagged.text.split(/(?=^diff --git )/m).filter((section) => {
+      const id = /^(L\d+)\|/m.exec(section)?.[1];
+      return lines.has(id);
+    }).join('');
+    const scoped = { text, lines };
+    scopes.set(dir, scoped);
+    const stage1Rules = group.map((rule) => ({ ...rule, locate: false }));
+    const questions = buildQuestions(stage1Rules, []);
+    const response = await callJev(apiKey, { ...state, diff: text }, questions, fetchImpl);
+    stage1Results.push({ response, questions, rules: stage1Rules });
+  }
 
   const stage1Found = findings(stage1Results, rules, tagged);
-  const elevated = stage1Found
-    .filter((f) => f.tier !== 'none' && projectRuleSet.some((r) => r.name === f.name))
-    .map((f) => ({ rule: projectRuleSet.find((r) => r.name === f.name), probability: f.probability }));
-  if (elevated.length === 0) return stage1Results;
-
-  const questions = {};
-  const usable = [];
-  for (const { rule, probability } of elevated) {
-    const lineIds = [...tagged.lines].filter(([, info]) => underDir(info.path, rule.dir)).map(([id]) => id);
-    if (lineIds.length === 0) continue;
-    questions[`${rule.name}_line`] = locateQuestion(rule.name, lineIds);
-    usable.push({ rule, probability });
-  }
-  if (usable.length === 0) return stage1Results;
-
-  let response;
-  try {
-    response = await callJev(apiKey, { ...state, diff: tagged.text }, questions, fetchImpl);
-  } catch {
-    return stage1Results;
-  }
-
-  const stage2Results = usable.map(({ rule, probability }) => ({
-    response: {
-      answers: {
-        [rule.name]: { noul: probability },
-        [`${rule.name}_line`]: response.answers?.[`${rule.name}_line`]
+  const stage2Results = [];
+  for (const [dir, group] of groups) {
+    const elevated = group.filter((rule) => stage1Found.some((f) => f.name === rule.name && f.tier !== 'none'));
+    if (elevated.length === 0) continue;
+    for (const chunk of splitByFileAndSize(scopes.get(dir))) {
+      const questions = Object.fromEntries(elevated.map((rule) => [`${rule.name}_line`, locateQuestion(rule.name, chunk.ids)]));
+      let response;
+      try {
+        response = await callJev(apiKey, { ...state, diff: chunk.text }, questions, fetchImpl);
+      } catch {
+        continue;
       }
-    },
-    rules: [rule]
-  }));
-
+      for (const rule of elevated) {
+        stage2Results.push({
+          response: { answers: {
+            [rule.name]: { noul: stage1Found.find((f) => f.name === rule.name).probability },
+            [`${rule.name}_line`]: response.answers?.[`${rule.name}_line`]
+          } },
+          rules: [rule]
+        });
+      }
+    }
+  }
   return [...stage1Results, ...stage2Results];
 }
 
@@ -494,6 +515,10 @@ function tierFor(probability) {
 }
 
 export function findings(results, rules, tagged) {
+  const missing = [...new Set(results.flatMap(({ response, rules: asked }) =>
+    asked.filter((rule) => !Number.isFinite(response?.answers?.[rule.name]?.noul)).map((rule) => rule.name)
+  ))];
+  if (missing.length > 0) throw new Error(`Jev returned no answer for: ${missing.join(', ')}. Review not completed.`);
   const byName = new Map(rules.map((r) => [r.name, { rule: r, probability: 0, where: null, lineConfidence: null }]));
 
   for (const result of results) {
@@ -502,9 +527,6 @@ export function findings(results, rules, tagged) {
       const answer = response.answers?.[rule.name];
       if (!answer || typeof answer.noul !== 'number') continue;
       const entry = byName.get(rule.name);
-      const isHigher = answer.noul > entry.probability || (answer.noul === entry.probability && entry.where === null);
-      if (!isHigher) continue;
-
       let where = null;
       let lineConfidence = null;
       if (rule.locate) {
@@ -514,7 +536,9 @@ export function findings(results, rules, tagged) {
           lineConfidence = lineAnswer.probabilities?.[lineAnswer.choice] ?? lineAnswer.confidence ?? null;
         }
       }
-      byName.set(rule.name, { rule, probability: answer.noul, where, lineConfidence });
+      const isHigher = answer.noul > entry.probability ||
+        (answer.noul === entry.probability && (entry.where === null || (lineConfidence ?? 0) > (entry.lineConfidence ?? 0)));
+      if (isHigher) byName.set(rule.name, { rule, probability: answer.noul, where, lineConfidence });
     }
   }
 
@@ -622,12 +646,16 @@ async function gitDiffForFiles(cwd, files) {
 export async function changedFiles(cwd) {
   try {
     const [tracked, untracked] = await Promise.all([
-      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '--relative', 'HEAD']),
-      execFileAsync('git', ['-C', cwd, 'ls-files', '--others', '--exclude-standard'])
+      execFileAsync('git', ['-C', cwd, 'diff', '--name-only', '-z', '--relative', 'HEAD']),
+      execFileAsync('git', ['-C', cwd, 'ls-files', '-z', '--others', '--exclude-standard'])
     ]);
     const files = new Set();
-    for (const line of tracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
-    for (const line of untracked.stdout.split('\n')) if (line.trim()) files.add(line.trim());
+    for (const file of tracked.stdout.split('\0')) if (file) files.add(file);
+    for (const file of untracked.stdout.split('\0')) {
+      if (!file || /(^|\/)\.git(\/|$)/.test(file)) continue;
+      if (/^(?:\.env(?:\..*)?|.*\.(?:pem|key)|id_rsa.*)$/.test(path.basename(file))) continue;
+      files.add(file);
+    }
     return [...files];
   } catch {
     return [];
@@ -660,23 +688,21 @@ export async function filesToLint({ cwd, sessionId }) {
   const statePath = stateFilePath(cwd, sessionId);
   const state = readState(statePath);
   const toLint = [];
-  const nextState = { ...state };
   for (const file of changed) {
     const hash = hashFile(cwd, file);
     if (!(file in state) || state[file] !== hash) toLint.push(file);
-    nextState[file] = hash;
-  }
-  try {
-    writeFileSync(statePath, JSON.stringify(nextState));
-  } catch {
-    // ignore: the next call falls back to an empty state
   }
   return toLint;
 }
 
 export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch }) {
   try {
-    return await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+    const result = await withTimeout(runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }), 10_000);
+    if (!result) return '';
+    try {
+      writeFileSync(result.statePath, JSON.stringify(result.nextState));
+    } catch {}
+    return result.text;
   } catch {
     return '';
   }
@@ -685,6 +711,10 @@ export async function lintAfterEdit({ cwd, sessionId, apiKey, fetchImpl = fetch 
 async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const files = await filesToLint({ cwd, sessionId });
   if (files.length === 0) return '';
+
+  const statePath = stateFilePath(cwd, sessionId);
+  const nextState = { ...readState(statePath) };
+  for (const file of files) nextState[file] = hashFile(cwd, file);
 
   const diff = await gitDiffForFiles(cwd, files);
   if (!diff) return '';
@@ -697,10 +727,10 @@ async function runLintAfterEdit({ cwd, sessionId, apiKey, fetchImpl }) {
   const state = { task: '' };
   const results = await askInStages({ apiKey, state, rules, tagged, fetchImpl });
   const blockFindings = findings(results, rules, tagged).filter((f) => f.tier === 'block');
-  if (blockFindings.length === 0) return '';
+  if (blockFindings.length === 0) return { text: '', statePath, nextState };
 
   const lines = ['Jev after edit:'];
   for (const f of blockFindings) lines.push(findingLine(f));
   lines.push('Check these lines now.');
-  return lines.join('\n');
+  return { text: lines.join('\n'), statePath, nextState };
 }

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FULL } from '../context.mjs';
 import { makeRepo } from './git-repo-fixture.mjs';
 
 const contextPath = fileURLToPath(new URL('../context.mjs', import.meta.url));
@@ -153,4 +154,10 @@ test('SessionStart still emits the full context, unaffected by the PostToolUse h
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+
+test('full context tells callers to always pass their working directory', () => {
+  assert.match(FULL, /task, diff, cwd\?, files\?, context\?/);
+  assert.match(FULL, /always pass `cwd` = the agent's current working directory/);
 });

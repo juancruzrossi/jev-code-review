@@ -590,7 +590,7 @@ test('changedFiles returns paths relative to cwd, for both a modified tracked fi
   }
 });
 
-test('filesToLint returns changed files once, then only re-edited files, per session', async () => {
+test('filesToLint returns files until a successful review, then only re-edits, per session', async () => {
   const dir = makeRepo('jev-tolint-');
   try {
     writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
@@ -599,6 +599,8 @@ test('filesToLint returns changed files once, then only re-edited files, per ses
     const first = await filesToLint({ cwd: dir, sessionId: 's1' });
     assert.deepEqual(new Set(first), new Set(['a.js', 'b.js']));
 
+    assert.deepEqual(new Set(await filesToLint({ cwd: dir, sessionId: 's1' })), new Set(first));
+    await lintAfterEdit({ cwd: dir, sessionId: 's1', apiKey: 'k', fetchImpl: async () => ({ ok: true, json: async () => ({ answers: { defect: { noul: 0 } } }) }) });
     const second = await filesToLint({ cwd: dir, sessionId: 's1' });
     assert.deepEqual(second, []);
 
@@ -624,6 +626,137 @@ test("lintAfterEdit returns '' and makes no fetch call when nothing changed", as
     const result = await lintAfterEdit({ cwd: dir, sessionId: 'sX', apiKey: 'k', fetchImpl });
     assert.equal(result, '');
     assert.equal(called, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('findings rejects a missing answer in any response, including a partial chunk', () => {
+  const rule = RULES.find((r) => r.name === 'defect');
+  for (const noul of [undefined, '0', null, NaN, Infinity]) {
+    assert.throws(() => findings([
+      { response: { answers: { defect: { noul: 0 } } }, rules: [rule] },
+      { response: { answers: { defect: { noul } } }, rules: [rule] }
+    ], [rule], tagDiff(TWO_FILE_DIFF)), /Jev returned no answer for: defect. Review not completed./);
+  }
+});
+
+
+test('project rule questions see only their directory and skip untouched directories', async () => {
+  const rule = { name: 'agents_1', dir: 'bridge', source: 'bridge/AGENTS.md', locate: true, violation: 'Yes: v', clean: 'No: c' };
+  for (const includeBridge of [false, true]) {
+    const tagged = tagDiff((includeBridge ? bigDiffFile('bridge/a.js', 1, 0) : '') + bigDiffFile('tools/b.js', 1, 1));
+    const calls = [];
+    const results = await askInStages({ apiKey: 'k', state: {}, rules: [...RULES, rule, { ...rule, name: 'agents_2' }], tagged,
+      fetchImpl: async (_, opts) => {
+        const body = JSON.parse(opts.body);
+        calls.push(body);
+        const answers = Object.fromEntries(Object.entries(body.questions).map(([name, q]) => [name, q.type === 'noul' ? { noul: 0 } : { choice: Object.keys(q.criteria)[0] }]));
+        return { ok: true, json: async () => ({ answers }) };
+      }
+    });
+    const scoped = calls.filter((body) => body.questions.agents_1);
+    assert.equal(scoped.length, includeBridge ? 1 : 0);
+    if (includeBridge) {
+      assert.match(scoped[0].state.diff, /bridge\/a.js/);
+      assert.doesNotMatch(scoped[0].state.diff, /tools\/|v1 = 1/);
+      assert.ok(scoped[0].questions.agents_2);
+    }
+    assert.match(calls.find((body) => body.questions.defect).state.diff, /tools\/b.js/);
+    assert.doesNotThrow(() => findings(results, [...RULES, rule, { ...rule, name: 'agents_2' }], tagged));
+  }
+});
+
+test('project locations are chunked and keep the highest-confidence location', async () => {
+  const rule = { name: 'agents_1', dir: '', source: 'AGENTS.md', locate: true, violation: 'Yes: v', clean: 'No: c' };
+  const tagged = tagDiff(bigDiff(260));
+  const widths = [];
+  const results = await askInStages({ apiKey: 'k', state: {}, rules: [rule], tagged,
+    fetchImpl: async (_, opts) => {
+      const body = JSON.parse(opts.body);
+      const answers = {};
+      for (const [name, q] of Object.entries(body.questions)) {
+        if (q.type === 'noul') answers[name] = { noul: 0.99 };
+        else {
+          const ids = Object.keys(q.criteria);
+          widths.push(ids.length);
+          answers[name] = { choice: ids[0], confidence: widths.length === 1 ? 0.5 : 0.95 };
+        }
+      }
+      return { ok: true, json: async () => ({ answers }) };
+    }
+  });
+  assert.deepEqual(widths, [255, 5]);
+  assert.deepEqual(findings(results, [rule], tagged)[0].where, { path: 'big.js', line: 256 });
+});
+
+
+test('per-edit requests exclude untracked secret names while retaining tracked files', async () => {
+  const dir = makeRepo('jev-secrets-');
+  try {
+    writeFileSync(path.join(dir, '.env.tracked'), 'tracked before\n');
+    execFileSync('git', ['-C', dir, 'add', '.env.tracked']);
+    execFileSync('git', ['-C', dir, 'commit', '-qm', 'track fixture']);
+    writeFileSync(path.join(dir, '.env.tracked'), 'tracked after\n');
+    mkdirSync(path.join(dir, 'nested'));
+    for (const name of ['.env', '.env.local', 'cert.pem', 'private.key', 'id_rsa', 'id_rsa.pub', 'café.pem', 'tab\t.key']) {
+      writeFileSync(path.join(dir, name), 'SYNTHETIC_SECRET\n');
+      writeFileSync(path.join(dir, 'nested', name), 'SYNTHETIC_SECRET\n');
+    }
+    writeFileSync(path.join(dir, 'safe.js'), 'const safe = 1;\n');
+    assert.deepEqual(new Set(await changedFiles(dir)), new Set(['.env.tracked', 'safe.js']));
+    const requests = [];
+    await lintAfterEdit({ cwd: dir, sessionId: 'secrets', apiKey: 'k', fetchImpl: async (_, opts) => {
+      requests.push(JSON.parse(opts.body));
+      return { ok: true, json: async () => ({ answers: { defect: { noul: 0 } } }) };
+    } });
+    assert.equal(requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(requests), /SYNTHETIC_SECRET/);
+    assert.match(requests[0].state.diff, /tracked after/);
+    assert.match(requests[0].state.diff, /const safe/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const failure of ['outage', 'missing']) {
+  test(`a ${failure} failure leaves the previous review state intact and retries`, async () => {
+    const dir = makeRepo('jev-retry-');
+    try {
+      writeFileSync(path.join(dir, 'a.js'), 'const a = 2;\n');
+      let calls = 0;
+      const opts = { cwd: dir, sessionId: failure, apiKey: 'k', fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          if (failure === 'outage') throw new Error('outage');
+          return { ok: true, json: async () => ({ answers: {} }) };
+        }
+        return { ok: true, json: async () => ({ answers: { defect: { noul: 0.95 } } }) };
+      } };
+      assert.equal(await lintAfterEdit(opts), '');
+      assert.match(await lintAfterEdit(opts), /defect 95%/);
+      assert.equal(calls, 2);
+      assert.equal(await lintAfterEdit(opts), '');
+      assert.equal(calls, 2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('tagDiff decodes real Git quoted paths as UTF-8 and preserves escaped characters', () => {
+  const dir = makeRepo('jev-unicode-');
+  const names = ['café.js', 'quote"slash\\tab\t.js'];
+  try {
+    for (const name of names) writeFileSync(path.join(dir, name), 'const n = 1;\n');
+    execFileSync('git', ['-C', dir, 'add', '--', ...names]);
+    execFileSync('git', ['-C', dir, 'commit', '-qm', 'quoted paths']);
+    for (const name of names) writeFileSync(path.join(dir, name), 'const n = 2;\n');
+    const diff = execFileSync('git', ['-C', dir, '-c', 'core.quotePath=true', 'diff'], { encoding: 'utf8' });
+    const tagged = tagDiff(diff);
+    assert.deepEqual(new Set([...tagged.lines.values()].map((info) => info.path)), new Set(names));
+    assert.ok([...tagged.lines.values()].every((info) => info.line === 1));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

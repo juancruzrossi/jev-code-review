@@ -10,7 +10,7 @@
   "repository": "https://github.com/juancruzrossi/jev-code-review",
   "license": "MIT",
   "keywords": ["code-review", "mcp", "quality"],
-  "hooks": "./hooks/hooks.json",
+  "hooks": "./hooks/codex.json",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Jev Code Review",
