@@ -46,7 +46,7 @@ Findings come in two tiers:
 
 When Jev is unsure about the exact line, the finding says `(line uncertain)`. The agent ends its answer with the table, so you see the result too.
 
-The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — deliver.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
+The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or more. `No findings — good to go.` means no rule reached the check tier. `No blockers — <n> to check.` means check findings remain: open each line and change it only if the problem is real. Neither verdict guarantees correctness.
 
 ## What it checks
 

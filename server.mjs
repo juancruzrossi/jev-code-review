@@ -64,7 +64,7 @@ function renderTable(tableFound, rounds) {
 function verdictLine(round, blockFindings, adviseFindings, noProgress) {
   if (blockFindings.length === 0) {
     return adviseFindings.length === 0
-      ? 'No findings — deliver.'
+      ? 'No findings — good to go.'
       : `No blockers — ${adviseFindings.length} to check. Open each line and change it only if the problem is real.`;
   }
   if (noProgress) return `No real progress since the last round — ${DELIVER}`;

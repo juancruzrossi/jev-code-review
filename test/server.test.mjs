@@ -205,7 +205,7 @@ test('the table starts with a full-width Jev Code Review title and every line ha
 test('below the advise tier reports no findings with no Must-resolve or Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /No findings — deliver\./);
+  assert.match(text, /No findings — good to go\./);
   assert.doesNotMatch(text, /^Must resolve/m);
   assert.doesNotMatch(text, /^Check/m);
 });
@@ -261,8 +261,8 @@ test('after no findings the next call with the same task starts a new round 1', 
   );
   const text1 = extractResult(stdout, 1).content[0].text;
   const text2 = extractResult(stdout, 2).content[0].text;
-  assert.match(text1, /No findings — deliver\./);
-  assert.match(text2, /No findings — deliver\./);
+  assert.match(text1, /No findings — good to go\./);
+  assert.match(text2, /No findings — good to go\./);
   assert.doesNotMatch(text2, /Round \d/);
 });
 
@@ -289,7 +289,7 @@ test('three rounds hit max rounds, then the next call starts a new round 1', asy
   const text3 = extractResult(stdout, 3).content[0].text;
   const text4 = extractResult(stdout, 4).content[0].text;
   assert.match(text3, /Max rounds reached/);
-  assert.match(text4, /No findings — deliver\./);
+  assert.match(text4, /No findings — good to go\./);
   assert.doesNotMatch(text4, /Round \d/);
 });
 
@@ -307,7 +307,7 @@ test('two pipelined calls sent before either response arrives still resolve as r
 test('a call with a stray previous argument works', async () => {
   const { stdout } = await runServer([call(1, { task: 'A', previous: 'garbage' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;
-  assert.match(text, /No findings — deliver\./);
+  assert.match(text, /No findings — good to go\./);
 });
 
 test('a violation of an api AGENTS.md rule is reported with the rule text and its source file', async () => {
@@ -345,7 +345,7 @@ test('no AGENTS files anywhere means only built-in questions are asked and the o
     writeFileSync(path.join(dir, 'CLAUDE.md'), 'Money amounts are integers in cents.');
     const { stdout, stderr } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /No findings — deliver\./);
+    assert.match(text, /No findings — good to go\./);
     assert.doesNotMatch(text, /agents_/);
     assert.doesNotMatch(text, /Project rules/);
     assert.deepEqual(extractExtractedFiles(stderr), []);
@@ -362,7 +362,7 @@ test('stage 2 locate is skipped when no project rule reaches the advisory tier',
     const diff = agentsDiff('packages/api/x.js');
     const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
-    assert.match(text, /No findings — deliver\./);
+    assert.match(text, /No findings — good to go\./);
     assert.equal(reviewCallCount(stderr), 2);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -481,7 +481,7 @@ for (const failure of ['directory creation', 'append']) {
       const { stdout } = await runServer([call(1, { task: 'A' })], { XDG_STATE_HOME: dir });
       const result = extractResult(stdout, 1);
       assert.equal(result.isError, undefined);
-      assert.match(result.content[0].text, /No findings — deliver\./);
+      assert.match(result.content[0].text, /No findings — good to go\./);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
