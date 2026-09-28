@@ -17,7 +17,6 @@ Works with Claude Code, Codex, and OpenCode.
 ├──────────────────────┼───────┤
 │ addresses_task       │ 8% ✓  │
 │ unrelated_change     │ 16% ✓ │
-│ needs_clarification  │ 5% ✓  │
 │ missing_requirement  │ 15% ✓ │
 │ defect               │ 92% ✗ │
 └──────────────────────┴───────┘
@@ -38,7 +37,6 @@ The table uses `✓` below 55%, `!` from 55% to below 90%, and `✗` at 90% or m
 |---|---|
 | addresses_task | The change fails to do what the task asks, or breaks a stated constraint |
 | unrelated_change | A changed line does not trace to the task |
-| needs_clarification | The task left out information this change needed |
 | missing_requirement | Something the task asked for is missing |
 | defect | An added line misbehaves for some real input |
 

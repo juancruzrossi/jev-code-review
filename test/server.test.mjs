@@ -19,7 +19,7 @@ index 111..222 100644
 +const b = 2;
 `;
 
-const RULE_NAMES = ['addresses_task', 'unrelated_change', 'needs_clarification', 'missing_requirement', 'defect'];
+const RULE_NAMES = ['addresses_task', 'unrelated_change', 'missing_requirement', 'defect'];
 
 const FETCH_STUB = `
 const RULE_NAMES = ${JSON.stringify(RULE_NAMES)};
@@ -263,10 +263,10 @@ test('a block count that does not drop reports no real progress', async () => {
 
 test('three rounds hit max rounds, then the next call starts a new round 1', async () => {
   const roundProbs = JSON.stringify([
-    [0.9, 0.9, 0.9, 0.9, 0.9],
-    [0.9, 0.05, 0.05, 0.05, 0.05],
-    [0.9, 0.05, 0.05, 0.05, 0.05],
-    [0.05, 0.05, 0.05, 0.05, 0.05]
+    [0.9, 0.9, 0.9, 0.9],
+    [0.9, 0.05, 0.05, 0.05],
+    [0.9, 0.05, 0.05, 0.05],
+    [0.05, 0.05, 0.05, 0.05]
   ]);
   const { stdout } = await runServer(
     [call(1, { task: 'A' }), call(2, { task: 'A' }), call(3, { task: 'A' }), call(4, { task: 'A' })],

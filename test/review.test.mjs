@@ -68,7 +68,7 @@ test('buildQuestions emits one noul per rule and one choice per locating rule', 
 });
 
 test('RULES names are exactly the task-alignment set plus missing_requirement and defect', () => {
-  assert.deepEqual(RULES.map((r) => r.name), ['addresses_task', 'unrelated_change', 'needs_clarification', 'missing_requirement', 'defect']);
+  assert.deepEqual(RULES.map((r) => r.name), ['addresses_task', 'unrelated_change', 'missing_requirement', 'defect']);
 });
 
 test('each built-in rule asks its own question', () => {
