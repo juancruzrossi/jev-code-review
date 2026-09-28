@@ -346,7 +346,7 @@ test('stage 2 locate is skipped when no project rule reaches the advisory tier',
     const { stdout, stderr } = await runServer([call(1, { task: 'A', diff })], { JEV_STUB_PROB: '0.05' }, dir);
     const text = extractResult(stdout, 1).content[0].text;
     assert.match(text, /PASSED — deliver\./);
-    assert.equal(reviewCallCount(stderr), 1);
+    assert.equal(reviewCallCount(stderr), 2);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

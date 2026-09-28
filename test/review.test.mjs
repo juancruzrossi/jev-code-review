@@ -639,3 +639,52 @@ test('findings rejects a missing answer in any response, including a partial chu
     ], [rule], tagDiff(TWO_FILE_DIFF)), /Jev returned no answer for: defect. Review not completed./);
   }
 });
+
+
+test('project rule questions see only their directory and skip untouched directories', async () => {
+  const rule = { name: 'agents_1', dir: 'bridge', source: 'bridge/AGENTS.md', locate: true, violation: 'Yes: v', clean: 'No: c' };
+  for (const includeBridge of [false, true]) {
+    const tagged = tagDiff((includeBridge ? bigDiffFile('bridge/a.js', 1, 0) : '') + bigDiffFile('tools/b.js', 1, 1));
+    const calls = [];
+    const results = await askInStages({ apiKey: 'k', state: {}, rules: [...RULES, rule, { ...rule, name: 'agents_2' }], tagged,
+      fetchImpl: async (_, opts) => {
+        const body = JSON.parse(opts.body);
+        calls.push(body);
+        const answers = Object.fromEntries(Object.entries(body.questions).map(([name, q]) => [name, q.type === 'noul' ? { noul: 0 } : { choice: Object.keys(q.criteria)[0] }]));
+        return { ok: true, json: async () => ({ answers }) };
+      }
+    });
+    const scoped = calls.filter((body) => body.questions.agents_1);
+    assert.equal(scoped.length, includeBridge ? 1 : 0);
+    if (includeBridge) {
+      assert.match(scoped[0].state.diff, /bridge\/a.js/);
+      assert.doesNotMatch(scoped[0].state.diff, /tools\/|v1 = 1/);
+      assert.ok(scoped[0].questions.agents_2);
+    }
+    assert.match(calls.find((body) => body.questions.defect).state.diff, /tools\/b.js/);
+    assert.doesNotThrow(() => findings(results, [...RULES, rule, { ...rule, name: 'agents_2' }], tagged));
+  }
+});
+
+test('project locations are chunked and keep the highest-confidence location', async () => {
+  const rule = { name: 'agents_1', dir: '', source: 'AGENTS.md', locate: true, violation: 'Yes: v', clean: 'No: c' };
+  const tagged = tagDiff(bigDiff(260));
+  const widths = [];
+  const results = await askInStages({ apiKey: 'k', state: {}, rules: [rule], tagged,
+    fetchImpl: async (_, opts) => {
+      const body = JSON.parse(opts.body);
+      const answers = {};
+      for (const [name, q] of Object.entries(body.questions)) {
+        if (q.type === 'noul') answers[name] = { noul: 0.99 };
+        else {
+          const ids = Object.keys(q.criteria);
+          widths.push(ids.length);
+          answers[name] = { choice: ids[0], confidence: widths.length === 1 ? 0.5 : 0.95 };
+        }
+      }
+      return { ok: true, json: async () => ({ answers }) };
+    }
+  });
+  assert.deepEqual(widths, [255, 5]);
+  assert.deepEqual(findings(results, [rule], tagged)[0].where, { path: 'big.js', line: 256 });
+});

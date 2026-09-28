@@ -365,45 +365,56 @@ export async function askJev({ apiKey, state, rules, tagged, fetchImpl = fetch }
 }
 
 export async function askInStages({ apiKey, state, rules, tagged, fetchImpl = fetch }) {
-  const stage1Rules = rules.map((rule) => (isProjectRule(rule) ? { ...rule, locate: false } : rule));
-  const stage1Results = await askJev({ apiKey, state, rules: stage1Rules, tagged, fetchImpl });
+  const builtInRules = rules.filter((rule) => !isProjectRule(rule));
+  const stage1Results = builtInRules.length > 0
+    ? await askJev({ apiKey, state, rules: builtInRules, tagged, fetchImpl })
+    : [];
+  const groups = new Map();
+  for (const rule of rules.filter(isProjectRule)) {
+    if (!groups.has(rule.dir)) groups.set(rule.dir, []);
+    groups.get(rule.dir).push(rule);
+  }
 
-  const projectRuleSet = rules.filter(isProjectRule);
-  if (projectRuleSet.length === 0) return stage1Results;
+  const scopes = new Map();
+  for (const [dir, group] of groups) {
+    const lines = new Map([...tagged.lines].filter(([, info]) => underDir(info.path, dir)));
+    if (lines.size === 0) continue;
+    const text = dir === '' ? tagged.text : tagged.text.split(/(?=^diff --git )/m).filter((section) => {
+      const id = /^(L\d+)\|/m.exec(section)?.[1];
+      return lines.has(id);
+    }).join('');
+    const scoped = { text, lines };
+    scopes.set(dir, scoped);
+    const stage1Rules = group.map((rule) => ({ ...rule, locate: false }));
+    const questions = buildQuestions(stage1Rules, []);
+    const response = await callJev(apiKey, { ...state, diff: text }, questions, fetchImpl);
+    stage1Results.push({ response, questions, rules: stage1Rules });
+  }
 
   const stage1Found = findings(stage1Results, rules, tagged);
-  const elevated = stage1Found
-    .filter((f) => f.tier !== 'none' && projectRuleSet.some((r) => r.name === f.name))
-    .map((f) => ({ rule: projectRuleSet.find((r) => r.name === f.name), probability: f.probability }));
-  if (elevated.length === 0) return stage1Results;
-
-  const questions = {};
-  const usable = [];
-  for (const { rule, probability } of elevated) {
-    const lineIds = [...tagged.lines].filter(([, info]) => underDir(info.path, rule.dir)).map(([id]) => id);
-    if (lineIds.length === 0) continue;
-    questions[`${rule.name}_line`] = locateQuestion(rule.name, lineIds);
-    usable.push({ rule, probability });
-  }
-  if (usable.length === 0) return stage1Results;
-
-  let response;
-  try {
-    response = await callJev(apiKey, { ...state, diff: tagged.text }, questions, fetchImpl);
-  } catch {
-    return stage1Results;
-  }
-
-  const stage2Results = usable.map(({ rule, probability }) => ({
-    response: {
-      answers: {
-        [rule.name]: { noul: probability },
-        [`${rule.name}_line`]: response.answers?.[`${rule.name}_line`]
+  const stage2Results = [];
+  for (const [dir, group] of groups) {
+    const elevated = group.filter((rule) => stage1Found.some((f) => f.name === rule.name && f.tier !== 'none'));
+    if (elevated.length === 0) continue;
+    for (const chunk of splitByFileAndSize(scopes.get(dir))) {
+      const questions = Object.fromEntries(elevated.map((rule) => [`${rule.name}_line`, locateQuestion(rule.name, chunk.ids)]));
+      let response;
+      try {
+        response = await callJev(apiKey, { ...state, diff: chunk.text }, questions, fetchImpl);
+      } catch {
+        continue;
       }
-    },
-    rules: [rule]
-  }));
-
+      for (const rule of elevated) {
+        stage2Results.push({
+          response: { answers: {
+            [rule.name]: { noul: stage1Found.find((f) => f.name === rule.name).probability },
+            [`${rule.name}_line`]: response.answers?.[`${rule.name}_line`]
+          } },
+          rules: [rule]
+        });
+      }
+    }
+  }
   return [...stage1Results, ...stage2Results];
 }
 
@@ -506,9 +517,6 @@ export function findings(results, rules, tagged) {
       const answer = response.answers?.[rule.name];
       if (!answer || typeof answer.noul !== 'number') continue;
       const entry = byName.get(rule.name);
-      const isHigher = answer.noul > entry.probability || (answer.noul === entry.probability && entry.where === null);
-      if (!isHigher) continue;
-
       let where = null;
       let lineConfidence = null;
       if (rule.locate) {
@@ -518,7 +526,9 @@ export function findings(results, rules, tagged) {
           lineConfidence = lineAnswer.probabilities?.[lineAnswer.choice] ?? lineAnswer.confidence ?? null;
         }
       }
-      byName.set(rule.name, { rule, probability: answer.noul, where, lineConfidence });
+      const isHigher = answer.noul > entry.probability ||
+        (answer.noul === entry.probability && (entry.where === null || (lineConfidence ?? 0) > (entry.lineConfidence ?? 0)));
+      if (isHigher) byName.set(rule.name, { rule, probability: answer.noul, where, lineConfidence });
     }
   }
 
