@@ -191,6 +191,17 @@ test('a single call sends its own task, reports round 1, and never prints a mark
   assert.doesNotMatch(text, /jev:previous/);
 });
 
+test('the table starts with a full-width Jev Code Review title and every line has the same width', async () => {
+  const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.1' });
+  const lines = extractResult(stdout, 1).content[0].text.split('\n');
+  const table = lines.slice(0, lines.findIndex((l) => l.startsWith('└')) + 1);
+  assert.match(table[0], /^┌─+┐$/);
+  assert.match(table[1], /^│\s+Jev Code Review\s+│$/);
+  assert.match(table[2], /^├─+┬[─┬]*┤$/);
+  assert.match(table[3], /│\s+Rule\s+│/);
+  assert.equal(new Set(table.map((l) => [...l].length)).size, 1);
+});
+
 test('below the advise tier reports no findings with no Must-resolve or Check section', async () => {
   const { stdout } = await runServer([call(1, { task: 'A' })], { JEV_STUB_PROB: '0.05' });
   const text = extractResult(stdout, 1).content[0].text;

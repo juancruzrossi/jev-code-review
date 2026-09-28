@@ -31,6 +31,8 @@ function padLeftAlign(text, width) {
   return ' ' + text + ' '.repeat(width - 1 - text.length);
 }
 
+const TABLE_TITLE = 'Jev Code Review';
+
 function renderTable(tableFound, rounds) {
   const finals = rounds[rounds.length - 1];
   const headers = ['Rule', ...rounds.slice(0, -1).map((_, i) => `Round ${i + 1}`), 'Final'];
@@ -41,13 +43,17 @@ function renderTable(tableFound, rounds) {
   ]);
 
   const widths = headers.map((header, col) => Math.max(header.length, ...rows.map((row) => row[col].length)) + 2);
+  const innerWidth = () => widths.reduce((sum, w) => sum + w, 0) + widths.length - 1;
+  widths[widths.length - 1] += Math.max(0, TABLE_TITLE.length + 2 - innerWidth());
 
   const border = (left, mid, right) => left + widths.map((w) => '─'.repeat(w)).join(mid) + right;
   const headerLine = '│' + headers.map((h, i) => padCenter(h, widths[i])).join('│') + '│';
   const dataLines = rows.map((row) => '│' + row.map((cell, i) => padLeftAlign(cell, widths[i])).join('│') + '│');
 
   return [
-    border('┌', '┬', '┐'),
+    '┌' + '─'.repeat(innerWidth()) + '┐',
+    '│' + padCenter(TABLE_TITLE, innerWidth()) + '│',
+    border('├', '┬', '┤'),
     headerLine,
     border('├', '┼', '┤'),
     ...dataLines,

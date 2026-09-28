@@ -22,14 +22,16 @@ It runs on its own. You don't need to ask for it, and your agent instructions (`
 ## What a finding looks like
 
 ```
-┌──────────────────────┬───────┐
-│         Rule         │ Final │
-├──────────────────────┼───────┤
-│ addresses_task       │ 8% ✓  │
-│ unrelated_change     │ 16% ✓ │
-│ missing_requirement  │ 15% ✓ │
-│ defect               │ 92% ✗ │
-└──────────────────────┴───────┘
+┌─────────────────────────────┐
+│       Jev Code Review       │
+├─────────────────────┬───────┤
+│        Rule         │ Final │
+├─────────────────────┼───────┤
+│ addresses_task      │ 8% ✓  │
+│ unrelated_change    │ 16% ✓ │
+│ missing_requirement │ 15% ✓ │
+│ defect              │ 92% ✗ │
+└─────────────────────┴───────┘
 
 Must resolve:
 - math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, skips or double-counts an item, leaves wrong state, swallows an error into a misleading result, forgets to await, or has a condition or bound the wrong way round.

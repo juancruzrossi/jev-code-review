@@ -12,14 +12,16 @@ Works with Claude Code, Codex, and OpenCode.
 4. The agent fixes, asks again (up to 3 rounds), and ends its answer with the table:
 
 ```
-┌──────────────────────┬───────┐
-│         Rule         │ Final │
-├──────────────────────┼───────┤
-│ addresses_task       │ 8% ✓  │
-│ unrelated_change     │ 16% ✓ │
-│ missing_requirement  │ 15% ✓ │
-│ defect               │ 92% ✗ │
-└──────────────────────┴───────┘
+┌─────────────────────────────┐
+│       Jev Code Review       │
+├─────────────────────┬───────┤
+│        Rule         │ Final │
+├─────────────────────┼───────┤
+│ addresses_task      │ 8% ✓  │
+│ unrelated_change    │ 16% ✓ │
+│ missing_requirement │ 15% ✓ │
+│ defect              │ 92% ✗ │
+└─────────────────────┴───────┘
 
 Must resolve:
 - math.js:7 — defect 92%: for some input it can receive, an added line returns a wrong value, ...
